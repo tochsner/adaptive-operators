@@ -1,6 +1,5 @@
-package my.beast.example;
+package adaptiveoperators;
 
-import beast.base.spec.domain.PositiveReal;
 import beast.base.spec.domain.Real;
 import beast.base.spec.inference.parameter.RealScalarParam;
 import org.junit.jupiter.api.Test;

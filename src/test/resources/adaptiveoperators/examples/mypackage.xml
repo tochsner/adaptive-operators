@@ -10,12 +10,12 @@
 
         <distribution id="posterior" spec="CompoundDistribution">
             <!-- Prior: MyDistribution applied directly to myParam (no Prior wrapper needed) -->
-            <distribution id="myPrior" spec="my.beast.example.MyDistribution" param="@myParam">
+            <distribution id="myPrior" spec="adaptiveoperators.MyDistribution" param="@myParam">
                 <mean id="priorMean" spec="RealScalarParam" value="1.0" domain="Real"/>
             </distribution>
         </distribution>
 
-        <operator id="myOp" spec="my.beast.example.MyScaleOperator"
+        <operator id="myOp" spec="adaptiveoperators.MyScaleOperator"
                   parameter="@myParam" scaleFactor="0.5" weight="1.0"/>
 
         <logger id="screenlog" spec="Logger" logEvery="100">

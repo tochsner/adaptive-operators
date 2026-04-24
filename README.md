@@ -92,6 +92,9 @@ Add the dependency to `pom.xml`:
 In `module-info.java`, declare the GUI dependencies as **static** (compile-time only):
 
 ```java
+import adaptiveoperators.MyDistribution;
+import adaptiveoperators.MyScaleOperator;
+
 open module my.beast.example {
     requires beast.pkgmgmt;
     requires beast.base;
@@ -102,9 +105,9 @@ open module my.beast.example {
     exports my.beast.example.app.beauti;  // GUI classes
 
     provides beast.base.core.BEASTInterface with
-        my.beast.example.MyDistribution,
-        my.beast.example.MyScaleOperator,
-        my.beast.example.app.beauti.MyAlignmentProvider;
+            adaptiveoperators.MyDistribution,
+            adaptiveoperators.MyScaleOperator,
+            my.beast.example.app.beauti.MyAlignmentProvider;
 }
 ```
 

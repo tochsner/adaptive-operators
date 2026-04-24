@@ -29,7 +29,7 @@
             <useProjectArtifact>true</useProjectArtifact>
             <scope>runtime</scope>
             <includes>
-                <include>my.beast.example:beast-my-package</include>
+                <include>org.github.tochsner:beast-adaptive-operators</include>
             </includes>
         </dependencySet>
     </dependencySets>
@@ -37,12 +37,12 @@
     <fileSets>
         <!-- examples/ (if present) -->
         <fileSet>
-            <directory>${project.basedir}/src/test/resources/my.beast.example/examples</directory>
+            <directory>${project.basedir}/src/test/resources/adaptiveoperators/examples</directory>
             <outputDirectory>/examples</outputDirectory>
         </fileSet>
         <!-- fxtemplates/ (if present; use JPMS module-namespaced resource path) -->
         <fileSet>
-            <directory>${project.basedir}/src/main/resources/my.beast.example/fxtemplates</directory>
+            <directory>${project.basedir}/src/main/resources/adaptiveoperators/fxtemplates</directory>
             <outputDirectory>/fxtemplates</outputDirectory>
         </fileSet>
     </fileSets>

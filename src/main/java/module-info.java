@@ -1,11 +1,14 @@
-open module my.beast.example {
+import adaptiveoperators.MyDistribution;
+import adaptiveoperators.MyScaleOperator;
+
+open module adaptiveoperators {
     requires beast.pkgmgmt;
     requires beast.base;
     requires org.apache.commons.statistics.distribution;
 
-    exports my.beast.example;
+    exports adaptiveoperators;
 
     provides beast.base.core.BEASTInterface with
-        my.beast.example.MyDistribution,
-        my.beast.example.MyScaleOperator;
+            MyDistribution,
+            MyScaleOperator;
 }

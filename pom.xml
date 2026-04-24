@@ -4,8 +4,8 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>my.beast.example</groupId>
-    <artifactId>beast-my-package</artifactId>
+    <groupId>org.github.tochsner</groupId>
+    <artifactId>beast-adaptive-operators</artifactId>
     <version>1.0.0-SNAPSHOT</version>
 
     <name>My BEAST Package</name>
@@ -92,7 +92,7 @@
                 <version>3.1.2</version>
                 <configuration>
                     <argLine>
-                        --add-reads my.beast.example=ALL-UNNAMED
+                        --add-reads adaptiveoperators=ALL-UNNAMED
                         --add-reads beast.base=ALL-UNNAMED
                         --add-reads beast.pkgmgmt=ALL-UNNAMED
                     </argLine>

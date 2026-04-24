@@ -1,4 +1,4 @@
-package my.beast.example;
+package adaptiveoperators;
 
 import beast.base.core.Description;
 import beast.base.core.Input;
