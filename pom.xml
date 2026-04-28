@@ -8,7 +8,7 @@
     <artifactId>beast-adaptive-operators</artifactId>
     <version>1.0.0-SNAPSHOT</version>
 
-    <name>My BEAST Package</name>
+    <name>Adaptive Operators</name>
     <description>Skeleton BEAST 3 external package</description>
 
     <url>https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPO</url>
@@ -36,7 +36,7 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.release>25</maven.compiler.release>
-        <beast.version>2.8.0-beta2</beast.version>
+        <beast.version>2.8.0-SNAPSHOT</beast.version>
         <beast.module>beast.base</beast.module>
         <beast.main>beast.base.minimal.BeastMain</beast.main>
         <beast.args/>
@@ -55,6 +55,41 @@
             <groupId>io.github.compevol</groupId>
             <artifactId>beast-base</artifactId>
             <version>${beast.version}</version>
+        </dependency>
+
+        <!-- Commons Math 4 (JPMS-friendly replacement for commons-math3) -->
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-math4-legacy</artifactId>
+            <version>4.0-beta1</version>
+            <exclusions>
+                <!-- Exclude unused transitive commons-numbers pulled by math4-legacy -->
+                <exclusion>
+                    <groupId>org.apache.commons</groupId>
+                    <artifactId>commons-numbers-complex</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.apache.commons</groupId>
+                    <artifactId>commons-numbers-angle</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.apache.commons</groupId>
+                    <artifactId>commons-numbers-quaternion</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.apache.commons</groupId>
+                    <artifactId>commons-numbers-arrays</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <!-- needed to run BeastMain from this module in IntelliJ -->
+        <dependency>
+            <groupId>io.github.compevol</groupId>
+            <artifactId>beast-fx</artifactId>
+            <version>${beast.version}</version>
+            <scope>runtime</scope>
+            <optional>true</optional>
         </dependency>
 
         <!-- Testing -->
