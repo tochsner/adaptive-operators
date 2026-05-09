@@ -1,61 +1,78 @@
 package adaptiveoperators;
 
-import beast.base.core.Description;
+import beast.base.core.Function;
 import beast.base.core.Input;
+import beast.base.evolution.tree.Node;
+import beast.base.evolution.tree.Tree;
 import beast.base.inference.Operator;
-import beast.base.spec.inference.parameter.RealScalarParam;
 import beast.base.util.Randomizer;
 
-/**
- * Example MCMC operator for a BEAST 3 package.
- * Proposes a new value by multiplying the current value by a random scale factor.
- *
- * <p>This class demonstrates how to write an operator that works with
- * strongly-typed {@link RealScalarParam} parameters.
- */
-@Description("Scales a single real scalar parameter by a random factor. " +
-        "The scale factor is drawn uniformly from [1/s, s] where s is the scaleFactor input.")
+import java.util.List;
+
 public class MyScaleOperator extends Operator {
 
-    final public Input<RealScalarParam<?>> parameterInput = new Input<>(
-            "parameter",
-            "the real scalar parameter to operate on",
+    final public Input<Tree> treeInput = new Input<>(
+            "tree",
+            "the tree to operate one",
             Input.Validate.REQUIRED);
 
-    final public Input<Double> scaleFactorInput = new Input<>(
-            "scaleFactor",
-            "magnitude of the scaling proposal (between 0 and 1, default 0.5)",
-            0.5);
+    final public Input<List<Function>> conditionsInput = new Input<>(
+            "conditions",
+            "the conditions to operate one",
+            Input.Validate.REQUIRED);
 
-    private double scaleFactor;
+    ConditionalAdaptiveSampler sampler;
 
     @Override
     public void initAndValidate() {
-        scaleFactor = scaleFactorInput.get();
+        List<Function> conditions = this.conditionsInput.get();
+
+        this.sampler = new MultivariateNormalSampler(conditions.size(), 1);
     }
 
     @Override
     public double proposal() {
-        final RealScalarParam<?> param = parameterInput.get();
+        Tree tree = this.treeInput.get();
+        List<Function> conditions = this.conditionsInput.get();
 
-        // Draw scale uniformly from [scaleFactor, 1/scaleFactor]
-        final double scale = scaleFactor + (Randomizer.nextDouble() * ((1.0 / scaleFactor) - scaleFactor));
+        // record values for all nodes
 
-        final double oldValue = param.get();
-        if (oldValue == 0) {
-            return Double.NEGATIVE_INFINITY;
+        double[] conditionValues = new double[conditions.size()];
+        for (int i = 0; i < conditionValues.length; i++) {
+            conditionValues[i] = conditions.get(i).getArrayValue();
         }
 
-        final double newValue = oldValue * scale;
+        for (Node candidateNode : tree.getNodesAsArray()) {
+            if (candidateNode.isRoot()) continue;
 
-        // Reject if outside domain bounds
-        if (!param.isValid(newValue)) {
-            return Double.NEGATIVE_INFINITY;
+            double[] values = new double[] {candidateNode.getParent().getHeight() - candidateNode.getHeight()};
+            sampler.record(conditionValues, values);
         }
 
-        param.set(newValue);
+        // update random node
 
-        // Log of the Hastings ratio for a scale proposal
-        return -Math.log(scale);
+        Node node = tree.getNode(Randomizer.nextInt(tree.getNodeCount()));
+        while (node.isRoot()) {
+            node = tree.getNode(Randomizer.nextInt(tree.getNodeCount()));
+        }
+
+        Node parent = node.getParent();
+        double oldBranchLength = parent.getHeight() - node.getHeight();
+
+        // we sample the branch length from conditional
+
+        double branchLength = this.sampler.sampleConditionally(conditionValues)[0];
+        if (branchLength < 0) return Double.NEGATIVE_INFINITY;
+
+        // set branch length
+
+        parent.setHeight(
+                node.getHeight() + branchLength
+        );
+
+        // TODO what is the HR?
+
+        return 0;
     }
+
 }

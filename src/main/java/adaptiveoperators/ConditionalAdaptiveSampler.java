@@ -1,36 +1,16 @@
 package adaptiveoperators;
 
-import beast.base.core.Input;
-import beast.base.evolution.tree.Node;
-import beast.base.evolution.tree.Tree;
-import beast.base.inference.Operator;
-import beast.base.util.Randomizer;
+public abstract class ConditionalAdaptiveSampler {
 
-public class MyScaleOperator extends Operator {
+    protected final int numConditions;
+    protected final int numValues;
 
-    final public Input<Tree> treeInput = new Input<>(
-            "tree",
-            "the tree to operate one",
-            Input.Validate.REQUIRED);
-
-    @Override
-    public void initAndValidate() {
+    public ConditionalAdaptiveSampler(int numConditions, int numValues) {
+        this.numConditions = numConditions;
+        this.numValues = numValues;
     }
 
-    @Override
-    public double proposal() {
-        Tree tree = this.treeInput.get();
-
-        Node node = tree.getNode(Randomizer.nextInt(tree.getNodeCount()));
-        while (node.isRoot()) {
-            node = tree.getNode(Randomizer.nextInt(tree.getNodeCount()));
-        }
-
-        Node parent = node.getParent();
-
-        // we sample the branch length from conditional
-
-        return 0;
-    }
+    public abstract void record(double[] conditions, double[] values);
+    public abstract double[] sampleConditionally(double[] conditions);
 
 }

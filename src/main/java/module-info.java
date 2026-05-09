@@ -1,3 +1,5 @@
+import weightoptimization.AdaptiveWeightOperator;
+import weightoptimization.RunningAverageScheme;
 import adaptiveoperators.MyScaleOperator;
 
 open module adaptiveoperators {
@@ -7,7 +9,10 @@ open module adaptiveoperators {
     requires org.apache.commons.math4.legacy;
 
     exports adaptiveoperators;
+    exports weightoptimization;
 
     provides beast.base.core.BEASTInterface with
-            MyScaleOperator;
+            MyScaleOperator,
+            AdaptiveWeightOperator,
+            RunningAverageScheme;
 }

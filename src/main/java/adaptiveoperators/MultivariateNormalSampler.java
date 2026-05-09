@@ -1,5 +1,7 @@
 package adaptiveoperators;
 
+import org.apache.commons.math4.legacy.linear.*;
+
 import java.util.Arrays;
 import java.util.Random;
 
@@ -62,7 +64,7 @@ public class MultivariateNormalSampler extends ConditionalAdaptiveSampler {
         for (int i = 0; i < nv; i++)
             for (int j = 0; j < nv; j++) s22[i][j] = covariance[nc + i][nc + j] / count;
 
-        RealMatrix sigma12 = new Array2DRowRealMatrix(s12);
+        Array2DRowRealMatrix sigma12 = new Array2DRowRealMatrix(s12);
         DecompositionSolver solver11 = new CholeskyDecomposition(new Array2DRowRealMatrix(s11)).getSolver();
 
         // alpha = Sigma11^{-1} * (conditions - mu1)
