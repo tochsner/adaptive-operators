@@ -7,8 +7,8 @@ import java.util.Random;
 
 public class MultivariateNormalSampler extends ConditionalAdaptiveSampler {
 
-    double[] mean;
-    double[][] covariance;
+    double[] mean;  // [conditions, values]
+    double[][] covarianceSum; // the covariance * count
     int count = 0;
 
     private final Random rng = new Random();
@@ -17,68 +17,69 @@ public class MultivariateNormalSampler extends ConditionalAdaptiveSampler {
         super(numConditions, numValues);
 
         this.mean = new double[numConditions + numValues];
-        this.covariance = new double[numConditions + numValues][numConditions + numValues];
+        this.covarianceSum = new double[numConditions + numValues][numConditions + numValues];
     }
 
     @Override
     public void record(double[] conditions, double[] values) {
         int n = conditions.length + values.length;
+
+        // we update the mean and covariances using the Welford update
+        // (see https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Welford's_online_algorithm)
+
         double[] x = new double[n];
         System.arraycopy(conditions, 0, x, 0, conditions.length);
         System.arraycopy(values, 0, x, conditions.length, values.length);
 
         this.count += 1;
 
-        // delta against old mean, then update mean
-        double[] delta = new double[n];
+        // old mean is needed for the Welford M2 update
+        double[] oldMean = Arrays.copyOf(this.mean, n);
         for (int i = 0; i < n; i++) {
-            delta[i] = x[i] - this.mean[i];
-            this.mean[i] += delta[i] / this.count;
+            this.mean[i] += (x[i] - this.mean[i]) / this.count;
         }
 
-        // delta2 against new mean, accumulate outer product into M2 (covariance)
-        double[] delta2 = new double[n];
-        for (int i = 0; i < n; i++) {
-            delta2[i] = x[i] - this.mean[i];
-        }
+        // accumulate covariances as the outer product from old and new means
         for (int i = 0; i < n; i++) {
             for (int j = 0; j < n; j++) {
-                this.covariance[i][j] += delta[i] * delta2[j];
+                this.covarianceSum[i][j] += (x[i] - oldMean[i]) * (x[j] - this.mean[j]);
             }
         }
     }
 
     @Override
     public double[] sampleConditionally(double[] conditions) {
-        int nc = numConditions;
-        int nv = numValues;
+        int nc = this.numConditions;
+        int nv = this.numValues;
 
-        // partition actual covariance (M2 / count) into sigma11, sigma12, sigma22
+        // partition actual covariance into sigma11, sigma12, sigma22
+
         double[][] s11 = new double[nc][nc];
         double[][] s12 = new double[nc][nv];
         double[][] s22 = new double[nv][nv];
+
         for (int i = 0; i < nc; i++)
-            for (int j = 0; j < nc; j++) s11[i][j] = covariance[i][j] / count;
+            for (int j = 0; j < nc; j++) s11[i][j] = this.covarianceSum[i][j] / this.count;
         for (int i = 0; i < nc; i++)
-            for (int j = 0; j < nv; j++) s12[i][j] = covariance[i][nc + j] / count;
+            for (int j = 0; j < nv; j++) s12[i][j] = this.covarianceSum[i][nc + j] / this.count;
         for (int i = 0; i < nv; i++)
-            for (int j = 0; j < nv; j++) s22[i][j] = covariance[nc + i][nc + j] / count;
+            for (int j = 0; j < nv; j++) s22[i][j] = this.covarianceSum[nc + i][nc + j] / this.count;
 
-        Array2DRowRealMatrix sigma12 = new Array2DRowRealMatrix(s12);
-        DecompositionSolver solver11 = new CholeskyDecomposition(new Array2DRowRealMatrix(s11)).getSolver();
+        RealMatrix sigma11 = new Array2DRowRealMatrix(s11);
+        RealMatrix sigma12 = new Array2DRowRealMatrix(s12);
+        RealMatrix sigma22 = new Array2DRowRealMatrix(s22);
+        RealMatrix sigma12T = sigma12.transpose();
+        DecompositionSolver solver11 = new SingularValueDecomposition(sigma11).getSolver();
 
-        // alpha = Sigma11^{-1} * (conditions - mu1)
-        double[] diff = new double[nc];
-        for (int i = 0; i < nc; i++) diff[i] = conditions[i] - mean[i];
-        RealVector alpha = solver11.solve(new ArrayRealVector(diff));
+        ArrayRealVector a = new ArrayRealVector(conditions);
+        ArrayRealVector mu1 = new ArrayRealVector(Arrays.copyOfRange(mean, 0, nc));
+        ArrayRealVector mu2 = new ArrayRealVector(Arrays.copyOfRange(mean, nc, nc + nv));
 
-        // conditional mean: mu2 + Sigma12^T * alpha
-        RealVector condMean = new ArrayRealVector(Arrays.copyOfRange(mean, nc, nc + nv))
-                .add(sigma12.transpose().operate(alpha));
+        // conditional mean: mu2 + Sigma12^T * Sigma11^{-1} * (a - mu1)
+        RealVector condMean = mu2.add(sigma12T.operate(solver11.solve(a.subtract(mu1))));
 
         // conditional covariance: Sigma22 - Sigma12^T * Sigma11^{-1} * Sigma12
-        RealMatrix condCov = new Array2DRowRealMatrix(s22)
-                .subtract(sigma12.transpose().multiply(solver11.solve(sigma12)));
+        RealMatrix condCov = sigma22.subtract(sigma12T.multiply(solver11.solve(sigma12)));
 
         // sample: condMean + L * z,  z ~ N(0, I)
         RealMatrix L = new CholeskyDecomposition(condCov).getL();
