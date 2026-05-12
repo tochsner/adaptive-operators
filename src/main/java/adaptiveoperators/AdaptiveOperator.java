@@ -1,78 +1,102 @@
 package adaptiveoperators;
 
-import beast.base.core.Function;
+import adapters.Adapter;
 import beast.base.core.Input;
-import beast.base.evolution.tree.Node;
-import beast.base.evolution.tree.Tree;
 import beast.base.inference.Operator;
-import beast.base.util.Randomizer;
 
+import java.util.ArrayList;
 import java.util.List;
 
-public class MyScaleOperator extends Operator {
+public class AdaptiveOperator extends Operator {
 
-    final public Input<Tree> treeInput = new Input<>(
-            "tree",
-            "the tree to operate one",
-            Input.Validate.REQUIRED);
+    public final Input<List<Adapter>> adaptersInput = new Input<>("adapters", "", new ArrayList<>());
 
-    final public Input<List<Function>> conditionsInput = new Input<>(
-            "conditions",
-            "the conditions to operate one",
-            Input.Validate.REQUIRED);
+    private List<Adapter> adapters;
+    private ConditionalSampler sampler;
 
-    ConditionalAdaptiveSampler sampler;
+    private final int numTraining = 10_000;
+    private int count = 0;
 
     @Override
     public void initAndValidate() {
-        List<Function> conditions = this.conditionsInput.get();
+        this.adapters = this.adaptersInput.get();
 
-        this.sampler = new MultivariateNormalSampler(conditions.size(), 1);
+        int totalNumMutable = 0;
+        int totalNumImmutable = 0;
+
+        for (Adapter adapter : this.adapters) {
+            totalNumMutable += adapter.getNumMutable();
+            totalNumImmutable += adapter.getNumImmutable();
+        }
+
+        this.sampler = new MultivariateNormalSampler(totalNumImmutable, totalNumMutable);
     }
 
     @Override
     public double proposal() {
-        Tree tree = this.treeInput.get();
-        List<Function> conditions = this.conditionsInput.get();
+        this.count++;
 
-        // record values for all nodes
+        double[] oldMutable = this.getMutable();
+        double[] oldImmutable = this.getImmutable();
 
-        double[] conditionValues = new double[conditions.size()];
-        for (int i = 0; i < conditionValues.length; i++) {
-            conditionValues[i] = conditions.get(i).getArrayValue();
+        // record the state in the sampler
+
+        this.sampler.record(oldImmutable, oldMutable);
+
+        if (this.count < this.numTraining) {
+            // we are in training phase
+            // we don't change the state
+            return 0;
         }
 
-        for (Node candidateNode : tree.getNodesAsArray()) {
-            if (candidateNode.isRoot()) continue;
+        // sample from the conditional distribution
 
-            double[] values = new double[] {candidateNode.getParent().getHeight() - candidateNode.getHeight()};
-            sampler.record(conditionValues, values);
+        double[] proposal = this.sampler.sampleConditionally(this.getImmutable());
+
+        // update the adapters
+
+        int idx = 0;
+        for (Adapter adapter : this.adapters) {
+            if (adapter.getNumMutable() == 0) continue;
+
+            double[] proposedMutable = new double[adapter.getNumMutable()];
+            System.arraycopy(proposal, idx, proposedMutable, 0, adapter.getNumMutable());
+            adapter.update(proposedMutable);
+
+            idx += adapter.getNumMutable();
         }
 
-        // update random node
+        // compute and return the log hastings ratio
 
-        Node node = tree.getNode(Randomizer.nextInt(tree.getNodeCount()));
-        while (node.isRoot()) {
-            node = tree.getNode(Randomizer.nextInt(tree.getNodeCount()));
-        }
+        double logDensityOld = this.sampler.logDensity(oldImmutable, oldMutable);
+        double logDensityNew = this.sampler.logDensity(oldImmutable, proposal);
 
-        Node parent = node.getParent();
-        double oldBranchLength = parent.getHeight() - node.getHeight();
-
-        // we sample the branch length from conditional
-
-        double branchLength = this.sampler.sampleConditionally(conditionValues)[0];
-        if (branchLength < 0) return Double.NEGATIVE_INFINITY;
-
-        // set branch length
-
-        parent.setHeight(
-                node.getHeight() + branchLength
-        );
-
-        // TODO what is the HR?
-
-        return 0;
+        return logDensityOld - logDensityNew;
     }
 
+    private double[] getMutable() {
+        double[] mutable = new double[this.sampler.numValues];
+
+        int idx = 0;
+        for (Adapter adapter : this.adapters) {
+            double[] adapterMutable = adapter.getMutable();
+            System.arraycopy(adapterMutable, 0, mutable, idx, adapter.getNumMutable());
+            idx += adapter.getNumMutable();
+        }
+
+        return mutable;
+    }
+
+    private double[] getImmutable() {
+        double[] immutable = new double[this.sampler.numConditions];
+
+        int idx = 0;
+        for (Adapter adapter : this.adapters) {
+            double[] adapterImmutable = adapter.getImmutable();
+            System.arraycopy(adapterImmutable, 0, immutable, idx, adapter.getNumImmutable());
+            idx += adapter.getNumImmutable();
+        }
+
+        return immutable;
+    }
 }

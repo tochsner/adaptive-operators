@@ -21,7 +21,7 @@ public class MyScaleOperator extends Operator {
             "the conditions to operate one",
             Input.Validate.REQUIRED);
 
-    ConditionalAdaptiveSampler sampler;
+    ConditionalSampler sampler;
 
     @Override
     public void initAndValidate() {
