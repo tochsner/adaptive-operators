@@ -1,15 +1,18 @@
 package adaptiveoperators;
 
 import adapters.Adapter;
+import beast.base.core.Function;
 import beast.base.core.Input;
 import beast.base.inference.Operator;
+import beast.base.inference.StateNode;
+import beast.base.inference.operator.kernel.Transform;
 
 import java.util.ArrayList;
 import java.util.List;
 
 public class AdaptiveOperator extends Operator {
 
-    public final Input<List<Adapter>> adaptersInput = new Input<>("adapters", "", new ArrayList<>());
+    public final Input<List<Adapter>> adaptersInput = new Input<>("adapter", "", new ArrayList<>());
 
     private List<Adapter> adapters;
     private ConditionalSampler sampler;
@@ -105,5 +108,16 @@ public class AdaptiveOperator extends Operator {
         }
 
         return immutable;
+    }
+
+    @Override
+    public List<StateNode> listStateNodes() {
+        List<StateNode> nodes = new ArrayList<>();
+
+        for (Adapter adapter : this.adapters) {
+            nodes.addAll(adapter.listStateNodes());
+        }
+
+        return nodes;
     }
 }

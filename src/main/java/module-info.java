@@ -1,6 +1,9 @@
 import weightoptimization.AdaptiveWeightOperator;
 import weightoptimization.RunningAverageScheme;
-import adaptiveoperators.MyScaleOperator;
+import adaptiveoperators.AdaptiveOperator;
+import adapters.BasicAdapter;
+import transforms.RealVectorIdentityTransform;
+import transforms.RealScalarLogTransform;
 
 open module adaptiveoperators {
     requires beast.pkgmgmt;
@@ -12,7 +15,10 @@ open module adaptiveoperators {
     exports weightoptimization;
 
     provides beast.base.core.BEASTInterface with
-            MyScaleOperator,
+            AdaptiveOperator,
+            BasicAdapter,
+            RealVectorIdentityTransform,
+            RealScalarLogTransform,
             AdaptiveWeightOperator,
             RunningAverageScheme;
 }

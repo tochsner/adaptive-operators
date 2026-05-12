@@ -79,6 +79,13 @@ public class MultivariateNormalSampler extends ConditionalSampler {
         int nc = this.numConditions;
         int nv = this.numValues;
 
+        if (nc == 0) {
+            return new ConditionalDistribution(
+                    new ArrayRealVector(this.mean),
+                    new Array2DRowRealMatrix(this.covarianceSum).scalarMultiply(1.0 / this.count)
+            );
+        }
+
         // partition actual covariance into sigma11, sigma12, sigma22
 
         double[][] s11 = new double[nc][nc];
