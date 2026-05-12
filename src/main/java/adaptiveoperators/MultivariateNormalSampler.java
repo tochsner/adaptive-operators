@@ -103,7 +103,7 @@ public class MultivariateNormalSampler extends ConditionalSampler {
         RealMatrix sigma12 = new Array2DRowRealMatrix(s12);
         RealMatrix sigma22 = new Array2DRowRealMatrix(s22);
         RealMatrix sigma12T = sigma12.transpose();
-        DecompositionSolver solver11 = new SingularValueDecomposition(sigma11).getSolver();
+        DecompositionSolver solver11 = new QRDecomposition(sigma11).getSolver();
 
         ArrayRealVector a = new ArrayRealVector(conditions);
         ArrayRealVector mu1 = new ArrayRealVector(Arrays.copyOfRange(mean, 0, nc));
@@ -124,7 +124,7 @@ public class MultivariateNormalSampler extends ConditionalSampler {
 
         private ConditionalDistribution(RealVector mean, RealMatrix covariance) {
             this.mean = mean;
-            this.covariance = covariance;
+            this.covariance = covariance.add(covariance.transpose()).scalarMultiply(0.5); ;
         }
     }
 

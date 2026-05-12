@@ -1,11 +1,9 @@
 package adaptiveoperators;
 
 import adapters.Adapter;
-import beast.base.core.Function;
 import beast.base.core.Input;
 import beast.base.inference.Operator;
 import beast.base.inference.StateNode;
-import beast.base.inference.operator.kernel.Transform;
 
 import java.util.ArrayList;
 import java.util.List;
