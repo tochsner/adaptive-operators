@@ -55,21 +55,28 @@ public class AdaptiveOperator extends Operator {
 
         // update the adapters
 
+        double logDensityOld = 0.0;
+        double logDensityNew = 0.0;
+
         int idx = 0;
         for (Adapter adapter : this.adapters) {
             if (adapter.getNumMutable() == 0) continue;
 
+            logDensityOld += adapter.getLogJacobianCorrection();
+
             double[] proposedMutable = new double[adapter.getNumMutable()];
             System.arraycopy(proposal, idx, proposedMutable, 0, adapter.getNumMutable());
             adapter.update(proposedMutable);
+
+            logDensityNew += adapter.getLogJacobianCorrection();
 
             idx += adapter.getNumMutable();
         }
 
         // compute and return the log hastings ratio
 
-        double logDensityOld = this.sampler.logDensity(oldImmutable, oldMutable);
-        double logDensityNew = this.sampler.logDensity(oldImmutable, proposal);
+        logDensityOld += this.sampler.logDensity(oldImmutable, oldMutable);
+        logDensityNew += this.sampler.logDensity(oldImmutable, proposal);
 
         return logDensityOld - logDensityNew;
     }

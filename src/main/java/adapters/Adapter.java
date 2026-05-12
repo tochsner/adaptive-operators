@@ -10,4 +10,6 @@ public interface Adapter {
 
     void update(double[] mutable);
 
+    double getLogJacobianCorrection();
+
 }
