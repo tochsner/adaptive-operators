@@ -34,11 +34,10 @@ public class RunningAverageScheme extends BEASTObject implements WeightScheme {
     @Override
     public void optimizeWeights(List<Operator> operators, double logAlpha, int lastOperatorIdx) {
         if (!Double.isFinite(logAlpha)) return;
+        if (this.count != 0 && 1e10 < Math.abs(logAlpha - this.sum / this.count)) return;
 
         this.count++;
         this.sum += logAlpha;
-
-        if (this.count < 50_000) return;
 
         int lag = this.lagInput.get();
         double mixingFactor = this.mixingFactorInput.get();

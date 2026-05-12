@@ -2,6 +2,7 @@ package weightoptimization;
 
 import beast.base.core.Input;
 import beast.base.inference.Operator;
+import beast.base.inference.OperatorSchedule;
 import beast.base.inference.StateNode;
 import beast.base.util.Randomizer;
 
@@ -38,9 +39,11 @@ public class AdaptiveWeightOperator extends Operator {
         double[] probabilities = this.weightScheme.getOperatorProbabilities(this.operators);
         double[] cumulativeProbabilities = new double[this.operators.size()];
 
+        boolean sampleUniformly = this.count < this.burnInInput.get() || new Random().nextDouble() < 0.1;
+
         double cumProb = 0;
         for (int i = 0; i < this.operators.size(); i++) {
-            if (this.count < this.burnInInput.get()) {
+            if (sampleUniformly) {
                 cumProb += 1.0 / this.operators.size();
             } else {
                 cumProb += probabilities[i];
@@ -59,11 +62,23 @@ public class AdaptiveWeightOperator extends Operator {
 
     @Override
     public void optimize(double logAlpha) {
-        this.count++;
+        for (Operator operator : this.operators) {
+            operator.optimize(logAlpha);
+        }
 
+        this.count++;
         if (this.count < this.burnInInput.get()) return;
 
         this.weightScheme.optimizeWeights(this.operators, logAlpha, lastOperatorIdx);
+    }
+
+    @Override
+    public void setOperatorSchedule(OperatorSchedule operatorSchedule) {
+        super.setOperatorSchedule(operatorSchedule);
+
+        for (Operator operator : this.operators) {
+            operator.setOperatorSchedule(operatorSchedule);
+        }
     }
 
     @Override
