@@ -5,7 +5,7 @@ import org.apache.commons.math4.legacy.linear.*;
 import java.util.Arrays;
 import java.util.Random;
 
-public class MultivariateNormalSampler extends ConditionalAdaptiveSampler {
+public class MultivariateNormalSampler extends ConditionalSampler {
 
     double[] mean;  // [conditions, values]
     double[][] covarianceSum; // the covariance * count
@@ -49,6 +49,33 @@ public class MultivariateNormalSampler extends ConditionalAdaptiveSampler {
 
     @Override
     public double[] sampleConditionally(double[] conditions) {
+        ConditionalDistribution distribution = conditionalDistribution(conditions);
+
+        // sample: condMean + L * z,  z ~ N(0, I)
+        RealMatrix L = new CholeskyDecomposition(distribution.covariance).getL();
+        double[] z = new double[this.numValues];
+        for (int i = 0; i < this.numValues; i++) z[i] = rng.nextGaussian();
+
+        return distribution.mean.add(L.operate(new ArrayRealVector(z))).toArray();
+    }
+
+    @Override
+    public double logDensity(double[] conditions, double[] values) {
+        ConditionalDistribution distribution = conditionalDistribution(conditions);
+        CholeskyDecomposition decomposition = new CholeskyDecomposition(distribution.covariance);
+        RealVector diff = new ArrayRealVector(values).subtract(distribution.mean);
+        RealVector solved = decomposition.getSolver().solve(diff);
+        double quadratic = diff.dotProduct(solved);
+        double logDeterminant = 0.0;
+        RealMatrix l = decomposition.getL();
+        for (int i = 0; i < this.numValues; i++) {
+            logDeterminant += 2.0 * Math.log(l.getEntry(i, i));
+        }
+
+        return -0.5 * (this.numValues * Math.log(2.0 * Math.PI) + logDeterminant + quadratic);
+    }
+
+    private ConditionalDistribution conditionalDistribution(double[] conditions) {
         int nc = this.numConditions;
         int nv = this.numValues;
 
@@ -81,12 +108,17 @@ public class MultivariateNormalSampler extends ConditionalAdaptiveSampler {
         // conditional covariance: Sigma22 - Sigma12^T * Sigma11^{-1} * Sigma12
         RealMatrix condCov = sigma22.subtract(sigma12T.multiply(solver11.solve(sigma12)));
 
-        // sample: condMean + L * z,  z ~ N(0, I)
-        RealMatrix L = new CholeskyDecomposition(condCov).getL();
-        double[] z = new double[nv];
-        for (int i = 0; i < nv; i++) z[i] = rng.nextGaussian();
+        return new ConditionalDistribution(condMean, condCov);
+    }
 
-        return condMean.add(L.operate(new ArrayRealVector(z))).toArray();
+    private static class ConditionalDistribution {
+        private final RealVector mean;
+        private final RealMatrix covariance;
+
+        private ConditionalDistribution(RealVector mean, RealMatrix covariance) {
+            this.mean = mean;
+            this.covariance = covariance;
+        }
     }
 
 }

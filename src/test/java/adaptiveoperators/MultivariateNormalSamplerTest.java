@@ -78,6 +78,25 @@ class MultivariateNormalSamplerTest {
         }
     }
 
+    @Test
+    void logDensityScoresValuesConditionedOnConditions() {
+        MultivariateNormalSampler sampler = new MultivariateNormalSampler(1, 2);
+        sampler.count = 1;
+        sampler.mean = new double[]{1.0, 2.0, -1.0};
+        sampler.covarianceSum = new double[][]{
+                {4.0, 2.0, -1.0},
+                {2.0, 9.0, 3.0},
+                {-1.0, 3.0, 16.0}
+        };
+
+        double[] conditions = {3.0};
+        double[] valuesAtConditionalMean = {3.0, -1.5};
+        double determinant = 8.0 * 15.75 - 3.5 * 3.5;
+        double expected = -0.5 * (2.0 * Math.log(2.0 * Math.PI) + Math.log(determinant));
+
+        assertThat(sampler.logDensity(conditions, valuesAtConditionalMean)).isCloseTo(expected, within(1e-12));
+    }
+
     private static double[] batchMean(double[][] observations) {
         double[] mean = new double[observations[0].length];
         for (double[] observation : observations) {
