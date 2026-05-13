@@ -2,6 +2,7 @@ package adapters;
 
 import beast.base.core.BEASTObject;
 import beast.base.core.Input;
+import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import beast.base.inference.StateNode;
 
@@ -23,7 +24,6 @@ public class TreeHeightAdapter extends BEASTObject implements Adapter {
         return 0;
     }
 
-    @Override
     public int getNumMutable() {
         return 1;
     }
@@ -47,12 +47,24 @@ public class TreeHeightAdapter extends BEASTObject implements Adapter {
 
     @Override
     public double getLogJacobianCorrection(int nodeId) {
-        return -Math.log(this.tree.getRoot().getHeight());
+        return -getScaledNodeCount() * Math.log(this.tree.getRoot().getHeight());
     }
 
     @Override
     public List<StateNode> listStateNodes() {
         return List.of(this.tree);
+    }
+
+    private int getScaledNodeCount() {
+        int count = 0;
+
+        for (Node node : this.tree.getInternalNodes()) {
+            if (!node.isFake() && (node.isRoot() || node.getParent().getHeight() != node.getHeight())) {
+                count++;
+            }
+        }
+
+        return count;
     }
 
 }

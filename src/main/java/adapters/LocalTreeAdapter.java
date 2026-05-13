@@ -36,12 +36,12 @@ public class LocalTreeAdapter extends BEASTObject implements Adapter {
 
         Node parent = node.getParent();
 
-        double branchToParent = parent == null ? 0.0 : parent.getHeight() - node.getHeight();
+        double branchToParent = parent.getHeight() - node.getHeight();
         double timeToRoot = this.tree.getRoot().getHeight() - node.getHeight();
 
         return new double[]{
-                Math.log(branchToParent + 0.001),
-                Math.log(timeToRoot + 0.001),
+                Math.log(branchToParent),
+                Math.log(timeToRoot),
                 Math.log(this.tree.getRoot().getHeight()),
         };
     }
