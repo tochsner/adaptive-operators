@@ -6,6 +6,7 @@ import adapters.TreeTripletAdapter;
 import adapters.LocalTreeAdapter;
 import adapters.TreeHeightAdapter;
 import adapters.NodePositionAdapter;
+import adapters.NodeValueAdapter;
 import transforms.RealVectorIdentityTransform;
 import transforms.IntVectorIdentityTransform;
 import transforms.RealScalarLogTransform;
@@ -28,6 +29,7 @@ open module adaptiveoperators {
             TreeTripletAdapter,
             LocalTreeAdapter,
             TreeHeightAdapter,
+            NodeValueAdapter,
             NodePositionAdapter,
             RealVectorIdentityTransform,
             IntVectorIdentityTransform,

@@ -13,7 +13,7 @@ public class TreeTripletAdapter extends BEASTObject implements Adapter {
 
     public final Input<Tree> treeInput = new Input<>("tree", "");
     public final Input<Integer> numberOfTripletsInput = new Input<>("numberOfTriplets",
-            "number of taxon triplets to sample", 10);
+            "number of taxon triplets to sample", 15);
     public final Input<Boolean> normalizeInput = new Input<>("normalize",
             "whether to divide triplet features by the current tree height", true);
 

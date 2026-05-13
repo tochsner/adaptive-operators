@@ -114,6 +114,11 @@ public class SimplexTransform extends BEASTObject implements RealVectorTransform
     }
 
     @Override
+    public double getLogJacobianCorrection(int index) {
+        throw new RuntimeException("Simplex cannot be used element-wise");
+    }
+
+    @Override
     public SimplexParam getStateNode() {
         return this.parameter;
     }

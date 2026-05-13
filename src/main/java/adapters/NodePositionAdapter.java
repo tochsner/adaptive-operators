@@ -13,7 +13,7 @@ public class NodePositionAdapter extends BEASTObject implements Adapter {
 
     public final Input<Tree> treeInput = new Input<>("tree", "");
     public final Input<Integer> numberOfTaxaInput = new Input<>("numberOfTaxa",
-            "number of taxa to sample for node distance features", 30);
+            "number of taxa to sample for node distance features", 15);
     public final Input<Boolean> normalizeInput = new Input<>("normalize",
             "whether to divide distances by twice the current tree height", true);
 
