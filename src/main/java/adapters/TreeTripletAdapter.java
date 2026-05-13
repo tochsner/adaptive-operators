@@ -13,7 +13,7 @@ public class TreeTripletAdapter extends BEASTObject implements Adapter {
 
     public final Input<Tree> treeInput = new Input<>("tree", "");
     public final Input<Integer> numberOfTripletsInput = new Input<>("numberOfTriplets",
-            "number of taxon triplets to sample", 15);
+            "number of taxon triplets to sample", 10);
     public final Input<Boolean> normalizeInput = new Input<>("normalize",
             "whether to divide triplet features by the current tree height", true);
 
@@ -101,9 +101,8 @@ public class TreeTripletAdapter extends BEASTObject implements Adapter {
 
     private static Node getCommonAncestor(Node nodeA, Node nodeB) {
         while (nodeA != nodeB) {
-            if (nodeB == null) {
-                int a = 4;
-            }
+            if (nodeA.isRoot()) return nodeA;
+            if (nodeB.isRoot()) return nodeB;
 
             if (nodeA.getHeight() < nodeB.getHeight()) {
                 nodeA = nodeA.getParent();

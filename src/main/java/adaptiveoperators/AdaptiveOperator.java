@@ -7,8 +7,6 @@ import beast.base.inference.Operator;
 import beast.base.inference.StateNode;
 import beast.base.util.Randomizer;
 import org.apache.commons.math4.legacy.exception.MathIllegalArgumentException;
-import org.apache.commons.math4.legacy.exception.MathIllegalNumberException;
-import org.apache.commons.math4.legacy.linear.SingularMatrixException;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -69,6 +67,8 @@ public class AdaptiveOperator extends Operator {
                 // we are in training phase
                 // we don't change the state
                 return 0;
+            } else if (this.count == this.numTraining) {
+                System.out.println("Start with adaptive kernel");
             }
 
             // sample from the conditional distribution

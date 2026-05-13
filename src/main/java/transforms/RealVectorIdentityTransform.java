@@ -34,6 +34,11 @@ public class RealVectorIdentityTransform extends BEASTObject implements RealVect
     }
 
     @Override
+    public double getLogJacobianCorrection(int index) {
+        return 0;
+    }
+
+    @Override
     public RealVectorParam<? extends Real> getStateNode() {
         return this.parameter;
     }

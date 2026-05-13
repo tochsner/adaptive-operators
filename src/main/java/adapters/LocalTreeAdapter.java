@@ -91,6 +91,10 @@ public class LocalTreeAdapter extends BEASTObject implements Adapter {
             double newParentHeight = newOlderChildHeight + previousShorterBranch;
             newHeights.put(parent, newParentHeight);
 
+            if (!Double.isFinite(newParentHeight)) {
+                throw new RuntimeException("Invalid height detected");
+            }
+
             node = parent;
         }
 
@@ -100,15 +104,21 @@ public class LocalTreeAdapter extends BEASTObject implements Adapter {
             nodeToChange.setHeight(newHeights.get(nodeToChange));
         }
 
+        // sanity checks
+
         for (Node nodeToChange : newHeights.keySet()) {
             if (nodeToChange.getParent() != null) {
                 if (nodeToChange.getParent().getHeight() < nodeToChange.getHeight())
-                    throw new RuntimeException("A");
+                    throw new RuntimeException("Negative branch length detected");
             }
 
             for (Node c : nodeToChange.getChildren()) {
                 if (nodeToChange.getHeight() < c.getHeight())
-                    throw new RuntimeException("B");
+                    throw new RuntimeException("Negative branch length detected");
+            }
+
+            if (!Double.isFinite(nodeToChange.getHeight())) {
+                throw new RuntimeException("Invalid height detected");
             }
         }
     }

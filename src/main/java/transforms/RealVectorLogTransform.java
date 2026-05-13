@@ -46,6 +46,11 @@ public class RealVectorLogTransform extends BEASTObject implements RealVectorTra
     }
 
     @Override
+    public double getLogJacobianCorrection(int index) {
+        return -Math.log(this.parameter.get(index));
+    }
+
+    @Override
     public RealVectorParam<? extends Real> getStateNode() {
         return this.parameter;
     }
