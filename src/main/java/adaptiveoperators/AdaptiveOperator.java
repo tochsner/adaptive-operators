@@ -20,8 +20,8 @@ public class AdaptiveOperator extends Operator {
     private Tree tree;
     private ConditionalSampler sampler;
 
-    private final int burnIn = 10_000;
-    private final int numTraining = 30_000;
+    private final int burnIn = 2_000;
+    private final int numTraining = 20_000;
     private int count = 0;
 
     @Override
@@ -37,7 +37,7 @@ public class AdaptiveOperator extends Operator {
             totalNumImmutable += adapter.getNumImmutable();
         }
 
-        this.sampler = new MultivariateNormalSampler(totalNumImmutable, totalNumMutable);
+        this.sampler = new GaussianMixtureSampler(totalNumImmutable, totalNumMutable);
     }
 
     @Override
