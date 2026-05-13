@@ -2,7 +2,7 @@ package transforms;
 
 import beast.base.inference.StateNode;
 
-public sealed interface Transform<T extends StateNode, V> permits RealScalarTransform, RealVectorTransform {
+public sealed interface Transform<T extends StateNode, V> permits IntVectorTransform, RealScalarTransform, RealVectorTransform {
 
     int getDimension();
     V get();

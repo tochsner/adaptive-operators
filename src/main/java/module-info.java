@@ -3,14 +3,21 @@ import weightoptimization.RunningAverageScheme;
 import adaptiveoperators.AdaptiveOperator;
 import adapters.BasicAdapter;
 import adapters.TreeTripletAdapter;
+import adapters.LocalTreeAdapter;
+import adapters.TreeHeightAdapter;
+import adapters.NodePositionAdapter;
 import transforms.RealVectorIdentityTransform;
+import transforms.IntVectorIdentityTransform;
 import transforms.RealScalarLogTransform;
+import transforms.RealVectorLogTransform;
+import transforms.SimplexTransform;
 
 open module adaptiveoperators {
     requires beast.pkgmgmt;
     requires beast.base;
     requires org.apache.commons.statistics.distribution;
     requires org.apache.commons.math4.legacy;
+    requires org.apache.commons.math4.legacy.exception;
 
     exports adaptiveoperators;
     exports weightoptimization;
@@ -19,8 +26,14 @@ open module adaptiveoperators {
             AdaptiveOperator,
             BasicAdapter,
             TreeTripletAdapter,
+            LocalTreeAdapter,
+            TreeHeightAdapter,
+            NodePositionAdapter,
             RealVectorIdentityTransform,
+            IntVectorIdentityTransform,
             RealScalarLogTransform,
+            SimplexTransform,
+            RealVectorLogTransform,
             AdaptiveWeightOperator,
             RunningAverageScheme;
 }

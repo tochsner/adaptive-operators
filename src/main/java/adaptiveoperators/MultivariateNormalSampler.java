@@ -11,6 +11,9 @@ public class MultivariateNormalSampler extends ConditionalSampler {
     double[][] covarianceSum; // the covariance * count
     int count = 0;
 
+    boolean hasChanged = true;
+    DecompositionSolver solver11;
+
     private final Random rng = new Random();
 
     public MultivariateNormalSampler(int numConditions, int numValues) {
@@ -22,6 +25,9 @@ public class MultivariateNormalSampler extends ConditionalSampler {
 
     @Override
     public void record(double[] conditions, double[] values) {
+        if (!Arrays.stream(conditions).allMatch(Double::isFinite)) return;
+        if (!Arrays.stream(values).allMatch(Double::isFinite)) return;
+
         int n = conditions.length + values.length;
 
         // we update the mean and covariances using the Welford update
@@ -45,10 +51,16 @@ public class MultivariateNormalSampler extends ConditionalSampler {
                 this.covarianceSum[i][j] += (x[i] - oldMean[i]) * (x[j] - this.mean[j]);
             }
         }
+
+        this.hasChanged = true;
     }
 
     @Override
     public double[] sampleConditionally(double[] conditions) {
+        if (!Arrays.stream(conditions).allMatch(Double::isFinite)) {
+            throw new RuntimeException("Non-finite conditions found.");
+        }
+
         ConditionalDistribution distribution = conditionalDistribution(conditions);
 
         // sample: condMean + L * z,  z ~ N(0, I)
@@ -103,17 +115,21 @@ public class MultivariateNormalSampler extends ConditionalSampler {
         RealMatrix sigma12 = new Array2DRowRealMatrix(s12);
         RealMatrix sigma22 = new Array2DRowRealMatrix(s22);
         RealMatrix sigma12T = sigma12.transpose();
-        DecompositionSolver solver11 = new QRDecomposition(sigma11).getSolver();
+
+        if (this.solver11 == null || this.hasChanged) {
+            this.solver11 = new QRDecomposition(sigma11).getSolver();
+            hasChanged = false;
+        }
 
         ArrayRealVector a = new ArrayRealVector(conditions);
         ArrayRealVector mu1 = new ArrayRealVector(Arrays.copyOfRange(mean, 0, nc));
         ArrayRealVector mu2 = new ArrayRealVector(Arrays.copyOfRange(mean, nc, nc + nv));
 
         // conditional mean: mu2 + Sigma12^T * Sigma11^{-1} * (a - mu1)
-        RealVector condMean = mu2.add(sigma12T.operate(solver11.solve(a.subtract(mu1))));
+        RealVector condMean = mu2.add(sigma12T.operate(this.solver11.solve(a.subtract(mu1))));
 
         // conditional covariance: Sigma22 - Sigma12^T * Sigma11^{-1} * Sigma12
-        RealMatrix condCov = sigma22.subtract(sigma12T.multiply(solver11.solve(sigma12)));
+        RealMatrix condCov = sigma22.subtract(sigma12T.multiply(this.solver11.solve(sigma12)));
 
         return new ConditionalDistribution(condMean, condCov);
     }

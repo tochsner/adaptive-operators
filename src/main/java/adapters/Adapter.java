@@ -2,7 +2,6 @@ package adapters;
 
 import beast.base.inference.StateNode;
 
-import java.util.Collection;
 import java.util.List;
 
 public interface Adapter {
@@ -10,12 +9,12 @@ public interface Adapter {
     int getNumImmutable();
     int getNumMutable();
 
-    double[] getImmutable();
-    double[] getMutable();
+    double[] getImmutable(int nodeId);
+    double[] getMutable(int nodeId);
 
-    void update(double[] mutable);
+    void update(double[] mutable, int nodeId);
 
-    double getLogJacobianCorrection();
+    double getLogJacobianCorrection(int nodeId);
 
     List<StateNode> listStateNodes();
 

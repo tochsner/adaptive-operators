@@ -3,6 +3,7 @@ package adapters;
 import beast.base.core.BEASTObject;
 import beast.base.core.Input;
 import beast.base.inference.StateNode;
+import transforms.IntVectorTransform;
 import transforms.RealScalarTransform;
 import transforms.RealVectorTransform;
 import transforms.Transform;
@@ -12,32 +13,50 @@ import java.util.List;
 
 public class BasicAdapter extends BEASTObject implements Adapter {
 
-    public final Input<List<Transform<?, ?>>> transformsInput = new Input<>("transform", "", new ArrayList<>());
+    public final Input<List<Transform<?, ?>>> transformsInput = new Input<>(
+            "transform", "", new ArrayList<>()
+    );
+    public final Input<Boolean> immutableInput = new Input<>(
+            "immutable", "", false
+    );
 
     private List<Transform<?, ?>> transforms;
+    private boolean immutable;
 
     @Override
     public void initAndValidate() {
         this.transforms = this.transformsInput.get();
+        this.immutable = this.immutableInput.get();
     }
 
     @Override
     public int getNumImmutable() {
-        return 0;
+        return this.immutable ? this.transforms.stream().mapToInt(Transform::getDimension).sum() : 0;
     }
 
     @Override
     public int getNumMutable() {
-        return this.transforms.stream().mapToInt(Transform::getDimension).sum();
+        return this.immutable ? 0 : this.transforms.stream().mapToInt(Transform::getDimension).sum();
     }
 
     @Override
-    public double[] getImmutable() {
-        return new double[0];
+    public double[] getImmutable(int nodeId) {
+        if (!this.immutable) return new double[0];
+
+        double[] mutable = new double[this.getNumImmutable()];
+
+        int offset = 0;
+        for (Transform<?, ?> transform : this.transforms) {
+            offset = appendMutable(transform, mutable, offset);
+        }
+
+        return mutable;
     }
 
     @Override
-    public double[] getMutable() {
+    public double[] getMutable(int nodeId) {
+        if (this.immutable) return new double[0];
+
         double[] mutable = new double[this.getNumMutable()];
 
         int offset = 0;
@@ -49,7 +68,9 @@ public class BasicAdapter extends BEASTObject implements Adapter {
     }
 
     @Override
-    public void update(double[] mutable) {
+    public void update(double[] mutable, int nodeId) {
+        if (this.immutable) return;
+
         if (mutable.length != this.getNumMutable()) {
             throw new IllegalArgumentException("Expected " + this.getNumMutable()
                     + " mutable values, but got " + mutable.length);
@@ -62,7 +83,9 @@ public class BasicAdapter extends BEASTObject implements Adapter {
     }
 
     @Override
-    public double getLogJacobianCorrection() {
+    public double getLogJacobianCorrection(int nodeId) {
+        if (this.immutable) return 0.0;
+
         double logCorrection = 0.0;
 
         for (Transform<?, ?> transform : this.transforms) {
@@ -93,6 +116,16 @@ public class BasicAdapter extends BEASTObject implements Adapter {
             Double[] values = vectorTransform.get();
 
             for (Double value : values) {
+                mutable[offset++] = value;
+            }
+
+            return offset;
+        }
+
+        if (transform instanceof IntVectorTransform<?> vectorTransform) {
+            Integer[] values = vectorTransform.get();
+
+            for (Integer value : values) {
                 mutable[offset++] = value;
             }
 

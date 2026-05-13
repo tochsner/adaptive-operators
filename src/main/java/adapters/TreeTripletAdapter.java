@@ -13,7 +13,7 @@ public class TreeTripletAdapter extends BEASTObject implements Adapter {
 
     public final Input<Tree> treeInput = new Input<>("tree", "");
     public final Input<Integer> numberOfTripletsInput = new Input<>("numberOfTriplets",
-            "number of taxon triplets to sample", 30);
+            "number of taxon triplets to sample", 15);
     public final Input<Boolean> normalizeInput = new Input<>("normalize",
             "whether to divide triplet features by the current tree height", true);
 
@@ -39,7 +39,7 @@ public class TreeTripletAdapter extends BEASTObject implements Adapter {
     }
 
     @Override
-    public double[] getImmutable() {
+    public double[] getImmutable(int nodeId) {
         double[] immutable = new double[this.getNumImmutable()];
         double scale = getScale();
 
@@ -52,19 +52,19 @@ public class TreeTripletAdapter extends BEASTObject implements Adapter {
     }
 
     @Override
-    public double[] getMutable() {
+    public double[] getMutable(int nodeId) {
         return new double[0];
     }
 
     @Override
-    public void update(double[] mutable) {
+    public void update(double[] mutable, int nodeId) {
         if (mutable.length != 0) {
             throw new IllegalArgumentException("TreeTripletAdapter has no mutable values");
         }
     }
 
     @Override
-    public double getLogJacobianCorrection() {
+    public double getLogJacobianCorrection(int nodeId) {
         return 0;
     }
 
@@ -101,6 +101,10 @@ public class TreeTripletAdapter extends BEASTObject implements Adapter {
 
     private static Node getCommonAncestor(Node nodeA, Node nodeB) {
         while (nodeA != nodeB) {
+            if (nodeB == null) {
+                int a = 4;
+            }
+
             if (nodeA.getHeight() < nodeB.getHeight()) {
                 nodeA = nodeA.getParent();
             } else {
