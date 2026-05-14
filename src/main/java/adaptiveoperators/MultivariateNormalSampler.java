@@ -2,7 +2,9 @@ package adaptiveoperators;
 
 import org.apache.commons.math4.legacy.linear.*;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Random;
 
 public class MultivariateNormalSampler extends ConditionalSampler {
@@ -11,7 +13,10 @@ public class MultivariateNormalSampler extends ConditionalSampler {
     double[][] covarianceSum; // the covariance * count
     int count = 0;
 
-    boolean hasChanged = true;
+    int batchSize = 16;
+    List<double[]> conditionsBatch;
+    List<double[]> valuesBatch;
+
     DecompositionSolver solver11;
 
     private final Random rng = new Random();
@@ -21,6 +26,9 @@ public class MultivariateNormalSampler extends ConditionalSampler {
 
         this.mean = new double[numConditions + numValues];
         this.covarianceSum = new double[numConditions + numValues][numConditions + numValues];
+
+        this.conditionsBatch = new ArrayList<>();
+        this.valuesBatch = new ArrayList<>();
     }
 
     @Override
@@ -28,31 +36,59 @@ public class MultivariateNormalSampler extends ConditionalSampler {
         if (!Arrays.stream(conditions).allMatch(Double::isFinite)) return;
         if (!Arrays.stream(values).allMatch(Double::isFinite)) return;
 
-        int n = conditions.length + values.length;
+        this.conditionsBatch.add(conditions);
+        this.valuesBatch.add(values);
 
-        // we update the mean and covariances using the Welford update
-        // (see https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Welford's_online_algorithm)
-
-        double[] x = new double[n];
-        System.arraycopy(conditions, 0, x, 0, conditions.length);
-        System.arraycopy(values, 0, x, conditions.length, values.length);
-
-        this.count += 1;
-
-        // old mean is needed for the Welford M2 update
-        double[] oldMean = Arrays.copyOf(this.mean, n);
-        for (int i = 0; i < n; i++) {
-            this.mean[i] += (x[i] - this.mean[i]) / this.count;
+        if (this.conditionsBatch.size() == this.batchSize) {
+            this.processBatch();
         }
+    }
 
-        // accumulate covariances as the outer product from old and new means
-        for (int i = 0; i < n; i++) {
+    private void processBatch() {
+        // update the mean and covariance using the last batch
+
+        for (int i = 0; i < this.batchSize; i++) {
+            double[] conditions = this.conditionsBatch.get(i);
+            double[] values = this.valuesBatch.get(i);
+
+            int n = conditions.length + values.length;
+
+            // we update the mean and covariances using the Welford update
+            // (see https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Welford's_online_algorithm)
+
+            double[] x = new double[n];
+            System.arraycopy(conditions, 0, x, 0, conditions.length);
+            System.arraycopy(values, 0, x, conditions.length, values.length);
+
+            this.count += 1;
+
+            // old mean is needed for the Welford M2 update
+            double[] oldMean = Arrays.copyOf(this.mean, n);
             for (int j = 0; j < n; j++) {
-                this.covarianceSum[i][j] += (x[i] - oldMean[i]) * (x[j] - this.mean[j]);
+                this.mean[j] += (x[j] - this.mean[j]) / this.count;
+            }
+
+            // accumulate covariances as the outer product from old and new means
+            for (int j = 0; j < n; j++) {
+                for (int k = 0; k < n; k++) {
+                    this.covarianceSum[j][k] += (x[j] - oldMean[j]) * (x[k] - this.mean[k]);
+                }
             }
         }
 
-        this.hasChanged = true;
+        // reset the batch
+
+        this.conditionsBatch.clear();
+        this.valuesBatch.clear();
+
+        // update the solver
+
+        int nc = this.numConditions;
+        double[][] s11 = new double[nc][nc];
+        for (int i = 0; i < nc; i++)
+            for (int j = 0; j < nc; j++) s11[i][j] = this.covarianceSum[i][j] / this.count;
+        RealMatrix sigma11 = new Array2DRowRealMatrix(s11);
+        this.solver11 = new QRDecomposition(sigma11).getSolver();
     }
 
     @Override
@@ -75,6 +111,7 @@ public class MultivariateNormalSampler extends ConditionalSampler {
     public double logDensity(double[] conditions, double[] values) {
         ConditionalDistribution distribution = conditionalDistribution(conditions);
         CholeskyDecomposition decomposition = new CholeskyDecomposition(distribution.covariance);
+
         RealVector diff = new ArrayRealVector(values).subtract(distribution.mean);
         RealVector solved = decomposition.getSolver().solve(diff);
         double quadratic = diff.dotProduct(solved);
@@ -116,9 +153,8 @@ public class MultivariateNormalSampler extends ConditionalSampler {
         RealMatrix sigma22 = new Array2DRowRealMatrix(s22);
         RealMatrix sigma12T = sigma12.transpose();
 
-        if (this.solver11 == null || this.hasChanged) {
+        if (this.solver11 == null) {
             this.solver11 = new QRDecomposition(sigma11).getSolver();
-            hasChanged = false;
         }
 
         ArrayRealVector a = new ArrayRealVector(conditions);

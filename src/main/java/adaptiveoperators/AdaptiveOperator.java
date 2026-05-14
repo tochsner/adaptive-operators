@@ -37,12 +37,12 @@ public class AdaptiveOperator extends Operator {
             totalNumImmutable += adapter.getNumImmutable();
         }
 
-        this.sampler = new GaussianMixtureSampler(totalNumImmutable, totalNumMutable);
+        this.sampler = new MultivariateNormalSampler(totalNumImmutable, totalNumMutable);
     }
 
     @Override
     public double proposal() {
-        try {
+        // try {
             this.count++;
 
             if (this.count < this.burnIn) {
@@ -107,10 +107,10 @@ public class AdaptiveOperator extends Operator {
             logDensityNew += this.sampler.logDensity(oldImmutable, proposal);
 
             return logDensityOld - logDensityNew;
-        } catch (Exception e) {
-            System.out.println(e);
-            return Double.NEGATIVE_INFINITY;
-        }
+//        } catch (Exception e) {
+//            System.out.println(e);
+//            return Double.NEGATIVE_INFINITY;
+//        }
     }
 
     private double[] getMutable(int nodeId) {
