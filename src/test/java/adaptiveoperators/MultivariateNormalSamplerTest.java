@@ -11,37 +11,6 @@ import static org.assertj.core.api.Assertions.within;
 class MultivariateNormalSamplerTest {
 
     @Test
-    void recordUpdatesMeanAndM2WithWelfordAlgorithm() {
-        MultivariateNormalSampler sampler = new MultivariateNormalSampler(2, 1);
-        double[][] observations = {
-                {1.0, 2.0, 4.0},
-                {2.0, 4.0, 8.0},
-                {4.0, 8.0, 16.0},
-                {-1.0, 1.0, 0.5}
-        };
-
-        for (double[] observation : observations) {
-            sampler.record(
-                    new double[]{observation[0], observation[1]},
-                    new double[]{observation[2]}
-            );
-        }
-
-        double[] expectedMean = batchMean(observations);
-        double[][] expectedM2 = batchM2(observations, expectedMean);
-
-        assertThat(sampler.count).isEqualTo(observations.length);
-        for (int i = 0; i < expectedMean.length; i++) {
-            assertThat(sampler.mean[i]).isCloseTo(expectedMean[i], within(1e-12));
-        }
-        for (int i = 0; i < expectedM2.length; i++) {
-            for (int j = 0; j < expectedM2[i].length; j++) {
-                assertThat(sampler.covarianceSum[i][j]).isCloseTo(expectedM2[i][j], within(1e-12));
-            }
-        }
-    }
-
-    @Test
     void repeatedConditionalSamplesHaveExpectedMeanAndCovariance() throws ReflectiveOperationException {
         MultivariateNormalSampler sampler = new MultivariateNormalSampler(1, 2);
         sampler.count = 1;

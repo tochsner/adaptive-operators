@@ -1,5 +1,6 @@
 import weightoptimization.AdaptiveWeightOperator;
 import weightoptimization.RunningAverageScheme;
+import schedule.DualAveragingOperatorSchedule;
 import adaptiveoperators.AdaptiveOperator;
 import adapters.BasicAdapter;
 import adapters.TreeTripletAdapter;
@@ -26,6 +27,7 @@ open module adaptiveoperators {
     provides beast.base.core.BEASTInterface with
             AdaptiveOperator,
             BasicAdapter,
+            DualAveragingOperatorSchedule,
             TreeTripletAdapter,
             LocalTreeAdapter,
             TreeHeightAdapter,
