@@ -20,6 +20,7 @@ open module adaptiveoperators {
     requires org.apache.commons.statistics.distribution;
     requires org.apache.commons.math4.legacy;
     requires org.apache.commons.math4.legacy.exception;
+    requires beagle;
 
     exports adaptiveoperators;
     exports weightoptimization;
