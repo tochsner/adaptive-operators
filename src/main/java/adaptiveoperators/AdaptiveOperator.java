@@ -21,7 +21,8 @@ public class AdaptiveOperator extends Operator {
     private ConditionalSampler sampler;
 
     private final int burnIn = 2_000;
-    private final int numTraining = 20_000;
+    private final int startTraining = 20_000;
+    private final int endTraining = 100_000;
     private int count = 0;
 
     @Override
@@ -61,14 +62,18 @@ public class AdaptiveOperator extends Operator {
 
             // record the state in the sampler
 
-            this.sampler.record(oldImmutable, oldMutable);
+            if (this.count < this.endTraining) {
+                this.sampler.record(oldImmutable, oldMutable);
+            }
 
-            if (this.count < this.numTraining) {
+            if (this.count < this.startTraining) {
                 // we are in training phase
                 // we don't change the state
                 return 0;
-            } else if (this.count == this.numTraining) {
+            } else if (this.count == this.startTraining) {
                 System.out.println("Start with adaptive kernel");
+            } else if (this.count == this.endTraining) {
+                System.out.println("End with adaptive kernel");
             }
 
             // sample from the conditional distribution

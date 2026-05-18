@@ -63,7 +63,7 @@ public class TreeUtils {
      * uniformly at random and then changing the (nodeA, nodeB) distance while preserving the order.
      * Note that this only works for ultrametric trees.
      */
-    public static void changeNodeDistance(Node nodeA, Node nodeB, double newDistance, Random random) {
+    public static double changeNodeDistance(Node nodeA, Node nodeB, double newDistance, Random random) {
         MRCA mrcaInfo = TreeUtils.getCommonAncestor(nodeA, nodeB);
         Node mrca = mrcaInfo.mrca();
         Set<Node> pathBetweenAB = mrcaInfo.path();
@@ -74,6 +74,8 @@ public class TreeUtils {
         if (currentDistance < newDistance) {
             // we increase the distance
 
+            int dof = 0;
+
             while (true) {
                 Node mrcaParent = mrca.getParent();
 
@@ -81,13 +83,13 @@ public class TreeUtils {
                     // the mrca is already the root
                     // we simply increase its height
                     mrca.setHeight(newMrcaHeight);
-                    return;
+                    return dof * Math.log(0.5);
                 }
 
                 if (newMrcaHeight < mrcaParent.getHeight()) {
                     // the parent of the MRCA is older, we simply increase the height of the MRCA
                     mrca.setHeight(newMrcaHeight);
-                    return;
+                    return dof * Math.log(0.5);
                 }
 
                 // the parent of the MRCA is younger
@@ -97,6 +99,8 @@ public class TreeUtils {
                 // we randomly choose a subtree to pair with the other parent subtree
 
                 Node chosenSubtree = random.nextBoolean() ? mrca.getLeft() : mrca.getRight();
+                dof++;
+
                 Node nonChosenSubtree = TreeUtils.getOtherChild(mrca, chosenSubtree);
                 Node otherParentSubtree = TreeUtils.getOtherChild(mrcaParent, mrca);
 
@@ -114,6 +118,8 @@ public class TreeUtils {
         } else {
             // we decrease the distance
 
+            int dof = 0;
+
             while (true) {
                 // the obstacle node is the older child
 
@@ -128,7 +134,7 @@ public class TreeUtils {
                     // neither of the children is younger than the new mrca height
                     // we simply move the mrca
                     mrca.setHeight(newMrcaHeight);
-                    return;
+                    return -dof * Math.log(0.5);
                 }
 
                 // assert that obstacle is an internal node (this should be the case for ultrametric trees)
@@ -142,6 +148,8 @@ public class TreeUtils {
                 Node subtreeToTraverse = pathBetweenAB.contains(obstacle.getLeft()) ? obstacle.getLeft() : obstacle.getRight();
                 Node subtreeNotToTraverse = TreeUtils.getOtherChild(obstacle, subtreeToTraverse);
                 Node nonObstacleSubtree = TreeUtils.getOtherChild(mrca, obstacle);
+
+                dof++;
 
                 // we keep the order of mrca and obstacle (mrca is older) by swapping
 
