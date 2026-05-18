@@ -22,7 +22,7 @@ public class AdaptiveOperator extends Operator {
 
     private final int burnIn = 2_000;
     private final int startTraining = 20_000;
-    private final int endTraining = 100_000;
+    private final int endTraining = 200_000;
     private int count = 0;
 
     @Override
