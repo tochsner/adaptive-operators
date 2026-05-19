@@ -84,11 +84,13 @@ public class MultivariateNormalSampler extends ConditionalSampler {
         // update the solver
 
         int nc = this.numConditions;
+
         double[][] s11 = new double[nc][nc];
         for (int i = 0; i < nc; i++)
             for (int j = 0; j < nc; j++) s11[i][j] = this.covarianceSum[i][j] / this.count;
+
         RealMatrix sigma11 = new Array2DRowRealMatrix(s11);
-        this.solver11 = new QRDecomposition(sigma11).getSolver();
+        this.solver11 = new SingularValueDecomposition(sigma11).getSolver();
     }
 
     @Override
@@ -97,10 +99,12 @@ public class MultivariateNormalSampler extends ConditionalSampler {
             throw new RuntimeException("Non-finite conditions found.");
         }
 
-        ConditionalDistribution distribution = conditionalDistribution(conditions);
+        ConditionalDistribution distribution = this.conditionalDistribution(conditions);
 
         // sample: condMean + L * z,  z ~ N(0, I)
-        RealMatrix L = new CholeskyDecomposition(distribution.covariance).getL();
+        RealMatrix L = new CholeskyDecomposition(
+                distribution.covariance, 1.0E-10, -1.0E-10
+        ).getL();
         double[] z = new double[this.numValues];
         for (int i = 0; i < this.numValues; i++) z[i] = rng.nextGaussian();
 
@@ -109,8 +113,10 @@ public class MultivariateNormalSampler extends ConditionalSampler {
 
     @Override
     public double logDensity(double[] conditions, double[] values) {
-        ConditionalDistribution distribution = conditionalDistribution(conditions);
-        CholeskyDecomposition decomposition = new CholeskyDecomposition(distribution.covariance);
+        ConditionalDistribution distribution = this.conditionalDistribution(conditions);
+        CholeskyDecomposition decomposition = new CholeskyDecomposition(
+                distribution.covariance, 1.0E-10, -1.0E-10
+        );
 
         RealVector diff = new ArrayRealVector(values).subtract(distribution.mean);
         RealVector solved = decomposition.getSolver().solve(diff);
@@ -154,7 +160,7 @@ public class MultivariateNormalSampler extends ConditionalSampler {
         RealMatrix sigma12T = sigma12.transpose();
 
         if (this.solver11 == null) {
-            this.solver11 = new QRDecomposition(sigma11).getSolver();
+            this.solver11 = new SingularValueDecomposition(sigma11).getSolver();
         }
 
         ArrayRealVector a = new ArrayRealVector(conditions);
@@ -166,6 +172,9 @@ public class MultivariateNormalSampler extends ConditionalSampler {
 
         // conditional covariance: Sigma22 - Sigma12^T * Sigma11^{-1} * Sigma12
         RealMatrix condCov = sigma22.subtract(sigma12T.multiply(this.solver11.solve(sigma12)));
+
+        // force symmetry
+        condCov = condCov.add(condCov.transpose()).scalarMultiply(0.5);
 
         return new ConditionalDistribution(condMean, condCov);
     }

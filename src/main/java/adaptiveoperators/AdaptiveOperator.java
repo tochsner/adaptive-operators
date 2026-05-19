@@ -6,7 +6,6 @@ import beast.base.evolution.tree.Tree;
 import beast.base.inference.Operator;
 import beast.base.inference.StateNode;
 import beast.base.util.Randomizer;
-import org.apache.commons.math4.legacy.exception.MathIllegalArgumentException;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -43,79 +42,70 @@ public class AdaptiveOperator extends Operator {
 
     @Override
     public double proposal() {
-        // try {
-            this.count++;
+        this.count++;
 
-            if (this.count < this.burnIn) {
-                // we are in burn in phase
-                // we don't change the state nor record the state
-                return 0;
-            }
+        if (this.count < this.burnIn) {
+            // we are in burn in phase
+            // we don't change the state nor record the state
+            return 0;
+        }
 
-            int nodeId = Randomizer.nextInt(this.tree.getNodeCount());
-            while (this.tree.getNode(nodeId).isLeaf() || this.tree.getNode(nodeId).isRoot()) {
-                nodeId = Randomizer.nextInt(this.tree.getNodeCount());
-            }
+        int nodeId = Randomizer.nextInt(this.tree.getNodeCount());
+        while (this.tree.getNode(nodeId).isLeaf() || this.tree.getNode(nodeId).isRoot()) {
+            nodeId = Randomizer.nextInt(this.tree.getNodeCount());
+        }
 
-            double[] oldMutable = this.getMutable(nodeId);
-            double[] oldImmutable = this.getImmutable(nodeId);
+        double[] oldMutable = this.getMutable(nodeId);
+        double[] oldImmutable = this.getImmutable(nodeId);
 
-            // record the state in the sampler
+        // record the state in the sampler
 
-            if (this.count < this.endTraining) {
-                this.sampler.record(oldImmutable, oldMutable);
-            }
+        if (this.count < this.endTraining) {
+            this.sampler.record(oldImmutable, oldMutable);
+        }
 
-            if (this.count < this.startTraining) {
-                // we are in training phase
-                // we don't change the state
-                return 0;
-            } else if (this.count == this.startTraining) {
-                System.out.println("Start with adaptive kernel");
-            } else if (this.count == this.endTraining) {
-                System.out.println("End with adaptive kernel");
-            }
+        if (this.count < this.startTraining) {
+            // we are in the initial training phase
+            // we don't change the state
+            return 0;
+        } else if (this.count == this.startTraining) {
+            System.out.println("Start with adaptive kernel");
+        } else if (this.count == this.endTraining) {
+            System.out.println("End with adaptive kernel");
+        }
 
-            // sample from the conditional distribution
+        // sample from the conditional distribution
 
-            double[] proposal;
-            try {
-                proposal = this.sampler.sampleConditionally(this.getImmutable(nodeId));
-            } catch (MathIllegalArgumentException e) {
-                return Double.NEGATIVE_INFINITY;
-            }
+        double[] proposal;
+        proposal = this.sampler.sampleConditionally(this.getImmutable(nodeId));
 
-            // update the adapters
+        // update the adapters
 
-            double logDensityOld = 0.0;
-            double logDensityNew = 0.0;
+        double logDensityOld = 0.0;
+        double logDensityNew = 0.0;
 
-            int idx = 0;
-            for (Adapter adapter : this.adapters) {
-                if (adapter.getNumMutable() == 0) continue;
+        int idx = 0;
+        for (Adapter adapter : this.adapters) {
+            if (adapter.getNumMutable() == 0) continue;
 
-                logDensityOld += adapter.getLogJacobianCorrection(nodeId);
+            logDensityOld += adapter.getLogJacobianCorrection(nodeId);
 
-                double[] proposedMutable = new double[adapter.getNumMutable()];
-                System.arraycopy(proposal, idx, proposedMutable, 0, adapter.getNumMutable());
-                adapter.update(proposedMutable, nodeId);
+            double[] proposedMutable = new double[adapter.getNumMutable()];
+            System.arraycopy(proposal, idx, proposedMutable, 0, adapter.getNumMutable());
+            adapter.update(proposedMutable, nodeId);
 
-                logDensityNew += adapter.getLogJacobianCorrection(nodeId);
+            logDensityNew += adapter.getLogJacobianCorrection(nodeId);
 
-                idx += adapter.getNumMutable();
-            }
+            idx += adapter.getNumMutable();
+        }
 
-            // compute and return the log hastings ratio
+        // compute and return the log hastings ratio
 
-            double[] newImmutable = this.getImmutable(nodeId);
-            logDensityOld += this.sampler.logDensity(newImmutable, oldMutable);
-            logDensityNew += this.sampler.logDensity(oldImmutable, proposal);
+        double[] newImmutable = this.getImmutable(nodeId);
+        logDensityOld += this.sampler.logDensity(newImmutable, oldMutable);
+        logDensityNew += this.sampler.logDensity(oldImmutable, proposal);
 
-            return logDensityOld - logDensityNew;
-//        } catch (Exception e) {
-//            System.out.println(e);
-//            return Double.NEGATIVE_INFINITY;
-//        }
+        return logDensityOld - logDensityNew;
     }
 
     private double[] getMutable(int nodeId) {

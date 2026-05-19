@@ -86,7 +86,6 @@ public class TaxaDistanceOperator extends TreeOperator {
             System.out.println("Adaptive tree ends");
         }
 
-
         int pairIndex = Randomizer.nextInt(this.taxonPairs.length);
         TaxonPair pair = this.taxonPairs[pairIndex];
         LogNormalModel model = this.models[pairIndex];
@@ -95,21 +94,16 @@ public class TaxaDistanceOperator extends TreeOperator {
         Node nodeB = this.tree.getNode(pair.secondTaxon);
         double oldDistance = getDistance(nodeA, nodeB);
 
-        try {
-            double newDistance = model.sample(this.random);
-            double logDensityOld = model.logDensity(oldDistance);
-            double logDensityNew = model.logDensity(newDistance);
+        double newDistance = model.sample(this.random);
+        double logDensityOld = model.logDensity(oldDistance);
+        double logDensityNew = model.logDensity(newDistance);
 
-            if (!Double.isFinite(logDensityOld) || !Double.isFinite(logDensityNew)) {
-                return Double.NEGATIVE_INFINITY;
-            }
-
-            double logFactor = TreeUtils.changeNodeDistance(nodeA, nodeB, newDistance, this.random);
-            return logDensityOld - logDensityNew - logFactor;
-        } catch (RuntimeException e) {
-            System.out.println(e.getMessage());
+        if (!Double.isFinite(logDensityOld) || !Double.isFinite(logDensityNew)) {
             return Double.NEGATIVE_INFINITY;
         }
+
+        double logFactor = TreeUtils.changeNodeDistance(nodeA, nodeB, newDistance, this.random);
+        return logDensityOld - logDensityNew - logFactor;
     }
 
     @Override
