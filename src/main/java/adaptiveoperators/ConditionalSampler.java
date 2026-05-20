@@ -11,7 +11,7 @@ public abstract class ConditionalSampler {
     }
 
     public abstract void record(double[] conditions, double[] values);
-    public abstract double[] sampleConditionally(double[] conditions);
-    public abstract double logDensity(double[] conditions, double[] values);
+    public abstract double[] sampleConditionally(double[] conditions, double scaleFactor);
+    public abstract double logDensity(double[] conditions, double[] values, double scaleFactor);
 
 }

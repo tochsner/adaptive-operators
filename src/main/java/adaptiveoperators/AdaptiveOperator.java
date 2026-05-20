@@ -24,6 +24,8 @@ public class AdaptiveOperator extends Operator {
     private final int endTraining = 200_000;
     private int count = 0;
 
+    private double scaleFactor = 1.0;
+
     @Override
     public void initAndValidate() {
         this.adapters = this.adaptersInput.get();
@@ -77,7 +79,7 @@ public class AdaptiveOperator extends Operator {
         // sample from the conditional distribution
 
         double[] proposal;
-        proposal = this.sampler.sampleConditionally(this.getImmutable(nodeId));
+        proposal = this.sampler.sampleConditionally(this.getImmutable(nodeId), scaleFactor);
 
         // update the adapters
 
@@ -102,8 +104,8 @@ public class AdaptiveOperator extends Operator {
         // compute and return the log hastings ratio
 
         double[] newImmutable = this.getImmutable(nodeId);
-        logDensityOld += this.sampler.logDensity(newImmutable, oldMutable);
-        logDensityNew += this.sampler.logDensity(oldImmutable, proposal);
+        logDensityOld += this.sampler.logDensity(newImmutable, oldMutable, scaleFactor);
+        logDensityNew += this.sampler.logDensity(oldImmutable, proposal, scaleFactor);
 
         return logDensityOld - logDensityNew;
     }

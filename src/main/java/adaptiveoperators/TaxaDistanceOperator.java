@@ -38,6 +38,8 @@ public class TaxaDistanceOperator extends TreeOperator {
     private Random random;
     private int count = 0;
 
+    double scaleFactor = 1.0;
+
     @Override
     public void initAndValidate() {
         this.tree = this.treeInput.get();
@@ -94,9 +96,9 @@ public class TaxaDistanceOperator extends TreeOperator {
         Node nodeB = this.tree.getNode(pair.secondTaxon);
         double oldDistance = getDistance(nodeA, nodeB);
 
-        double newDistance = model.sample(this.random);
-        double logDensityOld = model.logDensity(oldDistance);
-        double logDensityNew = model.logDensity(newDistance);
+        double newDistance = model.sample(this.random, this.scaleFactor);
+        double logDensityOld = model.logDensity(oldDistance, this.scaleFactor);
+        double logDensityNew = model.logDensity(newDistance, this.scaleFactor);
 
         if (!Double.isFinite(logDensityOld) || !Double.isFinite(logDensityNew)) {
             return Double.NEGATIVE_INFINITY;
@@ -109,6 +111,25 @@ public class TaxaDistanceOperator extends TreeOperator {
     @Override
     public List<StateNode> listStateNodes() {
         return List.of(this.tree);
+    }
+
+    @Override
+    public double getCoercableParameterValue() {
+        return scaleFactor;
+    }
+
+    @Override
+    public void setCoercableParameterValue(double value) {
+        scaleFactor = value;
+    }
+
+    @Override
+    public void optimize(double logAlpha) {
+        if (2*START_TRAINING < this.count) {
+            double delta = this.calcDelta(logAlpha);
+            delta += Math.log(this.scaleFactor);
+            this.scaleFactor = Math.exp(delta);
+        }
     }
 
     private void recordDistances() {
@@ -182,30 +203,30 @@ public class TaxaDistanceOperator extends TreeOperator {
             this.m2LogDistance += delta * delta2;
         }
 
-        private double sample(Random random) {
-            double standardDeviation = Math.sqrt(getVariance());
+        private double sample(Random random, double scaleFactor) {
+            double standardDeviation = Math.sqrt(getVariance(scaleFactor));
             return this.offset + Math.exp(this.meanLogDistance + standardDeviation * random.nextGaussian());
         }
 
-        private double logDensity(double distance) {
+        private double logDensity(double distance, double scaleFactor) {
             double shiftedDistance = distance - this.offset;
             if (!Double.isFinite(shiftedDistance) || shiftedDistance <= 0.0) {
                 return Double.NEGATIVE_INFINITY;
             }
 
-            double variance = getVariance();
+            double variance = getVariance(scaleFactor);
             double logDistance = Math.log(shiftedDistance);
             double diff = logDistance - this.meanLogDistance;
             return -Math.log(shiftedDistance)
                     - 0.5 * (Math.log(2.0 * Math.PI * variance) + diff * diff / variance);
         }
 
-        private double getVariance() {
+        private double getVariance(double scaleFactor) {
             if (this.count < 2) {
                 throw new IllegalStateException("At least two distances are required to sample a log-normal model");
             }
 
-            return Math.max(this.m2LogDistance / (this.count - 1), MIN_LOG_VARIANCE);
+            return scaleFactor * Math.max(this.m2LogDistance / (this.count - 1), MIN_LOG_VARIANCE);
         }
     }
 

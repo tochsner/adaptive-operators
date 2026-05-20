@@ -83,7 +83,7 @@ public class GaussianMixtureSampler extends ConditionalSampler {
     }
 
     @Override
-    public double[] sampleConditionally(double[] conditions) {
+    public double[] sampleConditionally(double[] conditions, double scaleFactor) {
         if (!Arrays.stream(conditions).allMatch(Double::isFinite)) {
             throw new RuntimeException("Non-finite conditions found.");
         }
@@ -114,7 +114,7 @@ public class GaussianMixtureSampler extends ConditionalSampler {
     }
 
     @Override
-    public double logDensity(double[] conditions, double[] values) {
+    public double logDensity(double[] conditions, double[] values, double scaleFactor) {
         if (!Arrays.stream(conditions).allMatch(Double::isFinite)) {
             throw new RuntimeException("Non-finite conditions found.");
         }

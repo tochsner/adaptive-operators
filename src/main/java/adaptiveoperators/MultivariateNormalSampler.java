@@ -94,7 +94,7 @@ public class MultivariateNormalSampler extends ConditionalSampler {
     }
 
     @Override
-    public double[] sampleConditionally(double[] conditions) {
+    public double[] sampleConditionally(double[] conditions, double scaleFactor) {
         if (!Arrays.stream(conditions).allMatch(Double::isFinite)) {
             throw new RuntimeException("Non-finite conditions found.");
         }
@@ -103,7 +103,7 @@ public class MultivariateNormalSampler extends ConditionalSampler {
 
         // sample: condMean + L * z,  z ~ N(0, I)
         RealMatrix L = new CholeskyDecomposition(
-                distribution.covariance, 1.0E-10, -1.0E-10
+                distribution.covariance.scalarMultiply(scaleFactor), 1.0E-10, -1.0E-10
         ).getL();
         double[] z = new double[this.numValues];
         for (int i = 0; i < this.numValues; i++) z[i] = rng.nextGaussian();
@@ -112,10 +112,10 @@ public class MultivariateNormalSampler extends ConditionalSampler {
     }
 
     @Override
-    public double logDensity(double[] conditions, double[] values) {
+    public double logDensity(double[] conditions, double[] values, double scaleFactor) {
         ConditionalDistribution distribution = this.conditionalDistribution(conditions);
         CholeskyDecomposition decomposition = new CholeskyDecomposition(
-                distribution.covariance, 1.0E-10, -1.0E-10
+                distribution.covariance.scalarMultiply(scaleFactor), 1.0E-10, -1.0E-10
         );
 
         RealVector diff = new ArrayRealVector(values).subtract(distribution.mean);
