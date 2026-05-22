@@ -6,15 +6,19 @@ import adapters.BasicAdapter;
 import adapters.TreeTripletAdapter;
 import adapters.LocalTreeAdapter;
 import adapters.TreeHeightAdapter;
+import adapters.MutableTreeHeightAdapter;
 import adapters.NodePositionAdapter;
 import adapters.NodeValueAdapter;
 import adaptiveoperators.TaxaDistanceOperator;
 import adaptiveoperators.TripletDistanceOperator;
+import adapters.TaxaDistanceAdapterGenerator;
 import transforms.RealVectorIdentityTransform;
 import transforms.IntVectorIdentityTransform;
 import transforms.RealScalarLogTransform;
 import transforms.RealVectorLogTransform;
 import transforms.SimplexTransform;
+import slice.StepOutShrinkSliceOperator;
+import mcmc.SliceMCMC;
 
 open module adaptiveoperators {
     requires beast.pkgmgmt;
@@ -30,10 +34,14 @@ open module adaptiveoperators {
     provides beast.base.core.BEASTInterface with
             AdaptiveOperator,
             BasicAdapter,
+            TaxaDistanceAdapterGenerator,
             DualAveragingOperatorSchedule,
+            StepOutShrinkSliceOperator,
+            SliceMCMC,
             TreeTripletAdapter,
             LocalTreeAdapter,
             TreeHeightAdapter,
+            MutableTreeHeightAdapter,
             NodeValueAdapter,
             NodePositionAdapter,
             TaxaDistanceOperator,
