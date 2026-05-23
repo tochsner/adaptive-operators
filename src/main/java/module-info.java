@@ -18,6 +18,7 @@ import transforms.RealScalarLogTransform;
 import transforms.RealVectorLogTransform;
 import transforms.SimplexTransform;
 import slice.StepOutShrinkSliceOperator;
+import slice.MultivariateStepOutShrinkSliceOperator;
 import mcmc.SliceMCMC;
 
 open module adaptiveoperators {
@@ -37,6 +38,7 @@ open module adaptiveoperators {
             TaxaDistanceAdapterGenerator,
             DualAveragingOperatorSchedule,
             StepOutShrinkSliceOperator,
+            MultivariateStepOutShrinkSliceOperator,
             SliceMCMC,
             TreeTripletAdapter,
             LocalTreeAdapter,
