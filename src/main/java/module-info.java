@@ -13,6 +13,7 @@ import adaptiveoperators.TaxaDistanceOperator;
 import adaptiveoperators.TripletDistanceOperator;
 import adapters.TaxaDistanceAdapterGenerator;
 import transforms.RealVectorIdentityTransform;
+import transforms.RealScalarSigmoidTransform;
 import transforms.IntVectorIdentityTransform;
 import transforms.RealScalarLogTransform;
 import transforms.RealVectorLogTransform;
@@ -40,6 +41,7 @@ open module adaptiveoperators {
             StepOutShrinkSliceOperator,
             MultivariateStepOutShrinkSliceOperator,
             SliceMCMC,
+            RealScalarSigmoidTransform,
             TreeTripletAdapter,
             LocalTreeAdapter,
             TreeHeightAdapter,

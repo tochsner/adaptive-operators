@@ -18,7 +18,7 @@ public class TripletDistanceOperator extends TreeOperator {
     public final Input<Integer> numberOfTripletsInput = new Input<>(
             "numberOfTriplets",
             "number of ordered taxon triplets to learn distance proposals for",
-            15);
+            100);
 
     public final Input<List<Operator>> alternativeOperatorsInput = new Input<>(
             "alternativeOperator",
