@@ -26,8 +26,8 @@ public class TaxaDistanceOperator extends TreeOperator {
             new ArrayList<>());
 
     private static final int BURN_IN = 20_000;
-    private static final int START_TRAINING = 60_000;
-    private static final int END_TRAINING = 600_000;
+    private static final int START_TRAINING = 100_000;
+    private static final int END_TRAINING = 900_000;
     private static final double MIN_LOG_VARIANCE = 1e-12;
 
     private Tree tree;

@@ -19,6 +19,7 @@ import transforms.RealScalarLogTransform;
 import transforms.RealVectorLogTransform;
 import transforms.SimplexTransform;
 import slice.StepOutShrinkSliceOperator;
+import slice.LinCombSliceOperator;
 import slice.MultivariateStepOutShrinkSliceOperator;
 import mcmc.SliceMCMC;
 
@@ -43,6 +44,7 @@ open module adaptiveoperators {
             SliceMCMC,
             RealScalarSigmoidTransform,
             TreeTripletAdapter,
+            LinCombSliceOperator,
             LocalTreeAdapter,
             TreeHeightAdapter,
             MutableTreeHeightAdapter,
