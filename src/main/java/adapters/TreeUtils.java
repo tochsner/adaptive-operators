@@ -24,6 +24,27 @@ public class TreeUtils {
         return new MRCA(nodeA, path);
     }
 
+    public static double[] getCubeDistances(Tree tree, LinkedList<Integer> cube) {
+        double[] distances = new double[cube.size() - 1];
+
+        for (int i = 0; i < cube.size() - 1; i++) {
+            Node nodeA = tree.getNode(cube.get(i));
+            Node nodeB = tree.getNode(cube.get(i + 1));
+            Node mrca = TreeUtils.getCommonAncestor(nodeA, nodeB).mrca;
+            distances[i] = 2.0 * mrca.getHeight() - nodeA.getHeight() - nodeB.getHeight();
+        }
+
+        return distances;
+    }
+
+    public static void setCubeDistances(Tree tree, LinkedList<Integer> cube, double[] cubeDistances) {
+        for (int i = 0; i < cube.size() - 1; i++) {
+            Node nodeA = tree.getNode(cube.get(i));
+            Node nodeB = tree.getNode(cube.get(i + 1));
+            TreeUtils.deterministicallyChangeNodeDistance(nodeA, nodeB, cubeDistances[i], cube);
+        }
+    }
+
     public record MRCA(Node mrca, Set<Node> path) {};
 
     /**
