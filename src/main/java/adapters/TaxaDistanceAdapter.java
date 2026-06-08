@@ -3,6 +3,8 @@ package adapters;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import beast.base.inference.StateNode;
+import beast.base.spec.type.RealScalar;
+import beast.base.spec.type.RealVector;
 
 import java.util.LinkedList;
 import java.util.List;
@@ -10,19 +12,23 @@ import java.util.Random;
 
 public class TaxaDistanceAdapter implements MAPAdapter {
 
-    private Tree tree;
+    private final RealScalar<?> clockRate;
+    public Tree tree;
     private int[] taxa;
     public LinkedList<Integer> cube;
     private Random random;
     private double offset;
-    private double mapDistance;
+    private double[] mapDistances;
+    private RealVector<?> clockRates;
 
-    public TaxaDistanceAdapter(Tree tree, int[] taxa, Tree mapTree) {
+    public TaxaDistanceAdapter(Tree tree, int[] taxa, List<Tree> mapTree, RealScalar<?> clockRate, RealVector<?> clockRates) {
         this.tree = tree;
         this.taxa = taxa;
+        this.clockRate = clockRate;
+        this.clockRates = clockRates;
         this.random = new Random();
         this.offset = computeOffset();
-        this.mapDistance = computeMap(mapTree);
+        this.mapDistances = computeMap(mapTree);
     }
 
     private double computeOffset() {
@@ -31,12 +37,18 @@ public class TaxaDistanceAdapter implements MAPAdapter {
                         - this.tree.getNode(this.taxa[1]).getHeight());
     }
 
-    private double computeMap(Tree mapTree) {
-        Node nodeA = mapTree.getNode(this.taxa[0]);
-        Node nodeB = mapTree.getNode(this.taxa[1]);
+    private double[] computeMap(List<Tree> mapTrees) {
+        double[] distances = new double[mapTrees.size()];
 
-        Node mrca = TreeUtils.getCommonAncestor(nodeA, nodeB).mrca();
-        return 2.0 * mrca.getHeight() - nodeA.getHeight() - nodeB.getHeight();
+        for (int i = 0; i < mapTrees.size(); i++) {
+            Node nodeA = mapTrees.get(i).getNode(this.taxa[0]);
+            Node nodeB = mapTrees.get(i).getNode(this.taxa[1]);
+
+            Node mrca = TreeUtils.getCommonAncestor(nodeA, nodeB).mrca();
+            distances[i] = 2.0 * mrca.getHeight() - nodeA.getHeight() - nodeB.getHeight();
+        }
+
+        return distances;
     }
 
     @Override
@@ -94,7 +106,20 @@ public class TaxaDistanceAdapter implements MAPAdapter {
 
     @Override
     public double[] getMutableMAP() {
-        return new double[] { Math.log(this.mapDistance - this.offset) };
+        double mapSubstitutions = this.mapDistances[this.random.nextInt(this.mapDistances.length)];
+
+        double clockRateSum = 0.0;
+        TreeUtils.MRCA mrca = TreeUtils.getCommonAncestor(this.tree.getNode(taxa[0]), this.tree.getNode(taxa[1]));
+
+        for (Node node : mrca.path()) {
+            if (node != mrca.mrca()) {
+                clockRateSum += this.clockRate.get() * this.clockRates.get(node.getNr());
+            }
+        }
+
+        double mapTime = mapSubstitutions / clockRateSum * (mrca.path().size() - 1);
+
+        return new double[] { Math.log(mapTime - this.offset) };
     }
 
 }

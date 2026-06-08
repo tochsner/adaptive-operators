@@ -3,6 +3,7 @@ package mala;
 import adapters.Adapter;
 import adapters.AdapterGenerator;
 import adapters.MAPAdapter;
+import adapters.TaxaDistanceAdapter;
 import adaptiveoperators.AdaptiveOperator;
 import beast.base.core.Input;
 import beast.base.inference.StateNode;
@@ -76,10 +77,6 @@ public class MAPGuidedMALAOperator extends AdaptiveOperator {
         double mapValue = adapter.getMutableMAP()[0];
         double oldLogJacobian = adapter.getLogJacobianCorrection(0);
 
-        if (!Double.isFinite(oldValue) || !Double.isFinite(mapValue) || !Double.isFinite(oldLogJacobian)) {
-            return Double.NEGATIVE_INFINITY;
-        }
-
         RunningVariance runningVariance = this.variances[adapterIdx];
         runningVariance.record(oldValue);
 
@@ -98,22 +95,10 @@ public class MAPGuidedMALAOperator extends AdaptiveOperator {
             return Double.NEGATIVE_INFINITY;
         }
 
-        double transitionCorrection;
-        try {
-            transitionCorrection = adapter.update(new double[]{newValue}, 0);
-        } catch (RuntimeException e) {
-            return Double.NEGATIVE_INFINITY;
-        }
-
+        double transitionCorrection = adapter.update(new double[]{newValue}, 0);
         double newLogJacobian = adapter.getLogJacobianCorrection(0);
         double reverseMean = this.proposalMean(newValue, mapValue);
         double reverseLogDensity = logGaussianDensity(oldValue, reverseMean, proposalVariance);
-
-        if (!Double.isFinite(transitionCorrection)
-                || !Double.isFinite(newLogJacobian)
-                || !Double.isFinite(reverseLogDensity)) {
-            return Double.NEGATIVE_INFINITY;
-        }
 
         return oldLogJacobian
                 + transitionCorrection
