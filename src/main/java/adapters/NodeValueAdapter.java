@@ -39,10 +39,11 @@ public class NodeValueAdapter extends BEASTObject implements Adapter {
     }
 
     @Override
-    public void update(double[] mutable, int nodeId) {
+    public double update(double[] mutable, int nodeId) {
         Double[] newValues = this.nodeValues.get().clone();
         newValues[nodeId] = mutable[0];
         this.nodeValues.set(newValues);
+        return 0.0;
     }
 
     @Override

@@ -38,7 +38,8 @@ public class MutableTreeHeightAdapter extends BEASTObject implements Adapter {
     }
 
     @Override
-    public void update(double[] mutable, int nodeId) {
+    public double update(double[] mutable, int nodeId) {
+        return 0.0;
     }
 
     @Override

@@ -2,8 +2,8 @@ package adapters;
 
 import java.util.List;
 
-public interface AdapterGenerator {
+public interface AdapterGenerator<T extends Adapter> {
 
-    List<Adapter> getAdapters();
+    List<T> getAdapters();
 
 }

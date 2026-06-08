@@ -8,25 +8,35 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Random;
 
-public class TaxaDistanceAdapter implements Adapter {
+public class TaxaDistanceAdapter implements MAPAdapter {
 
     private Tree tree;
     private int[] taxa;
     public LinkedList<Integer> cube;
     private Random random;
     private double offset;
+    private double mapDistance;
 
-    public TaxaDistanceAdapter(Tree tree, int[] taxa) {
+    public TaxaDistanceAdapter(Tree tree, int[] taxa, Tree mapTree) {
         this.tree = tree;
         this.taxa = taxa;
         this.random = new Random();
         this.offset = computeOffset();
+        this.mapDistance = computeMap(mapTree);
     }
 
     private double computeOffset() {
         return Math.abs(
                 this.tree.getNode(this.taxa[0]).getHeight()
                         - this.tree.getNode(this.taxa[1]).getHeight());
+    }
+
+    private double computeMap(Tree mapTree) {
+        Node nodeA = mapTree.getNode(this.taxa[0]);
+        Node nodeB = mapTree.getNode(this.taxa[1]);
+
+        Node mrca = TreeUtils.getCommonAncestor(nodeA, nodeB).mrca();
+        return 2.0 * mrca.getHeight() - nodeA.getHeight() - nodeB.getHeight();
     }
 
     @Override
@@ -53,8 +63,8 @@ public class TaxaDistanceAdapter implements Adapter {
     }
 
     @Override
-    public void update(double[] mutable, int nodeId) {
-        TreeUtils.deterministicallyChangeNodeDistance(
+    public double update(double[] mutable, int nodeId) {
+        return -TreeUtils.deterministicallyChangeNodeDistance(
                 this.tree.getNode(this.taxa[0]),
                 this.tree.getNode(this.taxa[1]),
                 Math.exp(mutable[0]) + this.offset,
@@ -64,7 +74,7 @@ public class TaxaDistanceAdapter implements Adapter {
 
     @Override
     public double getLogJacobianCorrection(int nodeId) {
-        return 0;
+        return -getMutable(nodeId)[0];
     }
 
     @Override
@@ -81,4 +91,10 @@ public class TaxaDistanceAdapter implements Adapter {
     public void refresh() {
         this.cube = TreeUtils.getRandomCompatibleCube(this.tree.getRoot(), this.taxa, this.random);
     }
+
+    @Override
+    public double[] getMutableMAP() {
+        return new double[] { Math.log(this.mapDistance - this.offset) };
+    }
+
 }

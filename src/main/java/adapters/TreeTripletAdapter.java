@@ -57,10 +57,11 @@ public class TreeTripletAdapter extends BEASTObject implements Adapter {
     }
 
     @Override
-    public void update(double[] mutable, int nodeId) {
+    public double update(double[] mutable, int nodeId) {
         if (mutable.length != 0) {
             throw new IllegalArgumentException("TreeTripletAdapter has no mutable values");
         }
+        return 0.0;
     }
 
     @Override

@@ -57,10 +57,11 @@ public class NodePositionAdapter extends BEASTObject implements Adapter {
     }
 
     @Override
-    public void update(double[] mutable, int nodeId) {
+    public double update(double[] mutable, int nodeId) {
         if (mutable.length != 0) {
             throw new IllegalArgumentException("NodePositionAdapter has no mutable values");
         }
+        return 0.0;
     }
 
     @Override

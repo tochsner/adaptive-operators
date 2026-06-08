@@ -66,9 +66,9 @@ public class LocalTreeAdapter extends BEASTObject implements Adapter {
     }
 
     @Override
-    public void update(double[] mutable, int nodeId) {
+    public double update(double[] mutable, int nodeId) {
         Node node = this.tree.getNode(nodeId);
-        if (node.isLeaf()) return;
+        if (node.isLeaf()) return 0.0;
 
         Map<Node, Double> newHeights = new HashMap<>();
 
@@ -121,6 +121,8 @@ public class LocalTreeAdapter extends BEASTObject implements Adapter {
                 throw new RuntimeException("Invalid height detected");
             }
         }
+
+        return 0.0;
     }
 
     @Override

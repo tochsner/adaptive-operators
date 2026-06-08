@@ -12,7 +12,7 @@ public interface Adapter {
     double[] getImmutable(int nodeId);
     double[] getMutable(int nodeId);
 
-    void update(double[] mutable, int nodeId);
+    double update(double[] mutable, int nodeId);
 
     double getLogJacobianCorrection(int nodeId);
 

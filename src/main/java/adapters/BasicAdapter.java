@@ -68,8 +68,8 @@ public class BasicAdapter extends BEASTObject implements Adapter {
     }
 
     @Override
-    public void update(double[] mutable, int nodeId) {
-        if (this.immutable) return;
+    public double update(double[] mutable, int nodeId) {
+        if (this.immutable) return 0.0;
 
         if (mutable.length != this.getNumMutable()) {
             throw new IllegalArgumentException("Expected " + this.getNumMutable()
@@ -80,6 +80,8 @@ public class BasicAdapter extends BEASTObject implements Adapter {
         for (Transform<?, ?> transform : this.transforms) {
             offset = updateTransform(transform, mutable, offset);
         }
+
+        return 0.0;
     }
 
     @Override

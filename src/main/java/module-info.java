@@ -21,6 +21,7 @@ import transforms.SimplexTransform;
 import slice.StepOutShrinkSliceOperator;
 import slice.LinCombSliceOperator;
 import slice.MultivariateStepOutShrinkSliceOperator;
+import mala.MAPGuidedMALAOperator;
 import mcmc.SliceMCMC;
 
 open module adaptiveoperators {
@@ -41,6 +42,7 @@ open module adaptiveoperators {
             DualAveragingOperatorSchedule,
             StepOutShrinkSliceOperator,
             MultivariateStepOutShrinkSliceOperator,
+            MAPGuidedMALAOperator,
             SliceMCMC,
             TreeTripletAdapter,
             LinCombSliceOperator,
