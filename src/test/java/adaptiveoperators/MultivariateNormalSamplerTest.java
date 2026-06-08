@@ -26,7 +26,7 @@ class MultivariateNormalSamplerTest {
         double[] conditions = {3.0};
         double[][] samples = new double[sampleCount][];
         for (int i = 0; i < sampleCount; i++) {
-            samples[i] = sampler.sampleConditionally(conditions);
+            samples[i] = sampler.sampleConditionally(conditions, 1.0);
         }
 
         double[] sampleMean = batchMean(samples);
@@ -63,7 +63,7 @@ class MultivariateNormalSamplerTest {
         double determinant = 8.0 * 15.75 - 3.5 * 3.5;
         double expected = -0.5 * (2.0 * Math.log(2.0 * Math.PI) + Math.log(determinant));
 
-        assertThat(sampler.logDensity(conditions, valuesAtConditionalMean)).isCloseTo(expected, within(1e-12));
+        assertThat(sampler.logDensity(conditions, valuesAtConditionalMean, 1.0)).isCloseTo(expected, within(1e-12));
     }
 
     private static double[] batchMean(double[][] observations) {

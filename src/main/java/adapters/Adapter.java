@@ -18,4 +18,6 @@ public interface Adapter {
 
     List<StateNode> listStateNodes();
 
+    default void refresh() {}
+
 }

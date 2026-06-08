@@ -8,6 +8,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import java.util.HashSet;
+import java.util.LinkedList;
 import java.util.Random;
 import java.util.Set;
 import java.util.stream.LongStream;
@@ -93,6 +94,46 @@ class TreeUtilsTest {
 
         assertThat(distance(nodeA, nodeD)).isCloseTo(2.5, within(1e-12));
         assertTreeIsConnected(tree.getRoot(), "A", "B", "C", "D");
+    }
+
+    @Test
+    void changeNodeDistanceCanIncreaseDeterministically1() {
+        TreeParser tree = parseTree("((A:1.0,B:1.0):1.0,C:2.0):0.0;");
+
+        Node nodeA = findLeaf(tree.getRoot(), "A");
+        Node nodeB = findLeaf(tree.getRoot(), "B");
+        Node nodeC = findLeaf(tree.getRoot(), "C");
+
+        LinkedList<Integer> cube = new LinkedList<>();
+        cube.add(nodeA.getNr());
+        cube.add(nodeB.getNr());
+        cube.add(nodeC.getNr());
+
+        TreeUtils.deterministicallyChangeNodeDistance(nodeA, nodeB, 6.0, cube);
+
+        assertThat(distance(nodeA, nodeB)).isCloseTo(6.0, within(1e-12));
+        assertThat(tree.getRoot().toNewick()).isEqualTo("((B:2.0,C:2.0):1.0,A:3.0):0.0");
+        assertTreeIsConnected(tree.getRoot(), "A", "B", "C");
+    }
+
+    @Test
+    void changeNodeDistanceCanIncreaseDeterministically2() {
+        TreeParser tree = parseTree("((A:1.0,B:1.0):1.0,C:2.0):0.0;");
+
+        Node nodeA = findLeaf(tree.getRoot(), "A");
+        Node nodeB = findLeaf(tree.getRoot(), "B");
+        Node nodeC = findLeaf(tree.getRoot(), "C");
+
+        LinkedList<Integer> cube = new LinkedList<>();
+        cube.add(nodeA.getNr());
+        cube.add(nodeC.getNr());
+        cube.add(nodeB.getNr());
+
+        TreeUtils.deterministicallyChangeNodeDistance(nodeA, nodeB, 6.0, cube);
+
+        assertThat(distance(nodeA, nodeB)).isCloseTo(6.0, within(1e-12));
+        assertThat(tree.getRoot().toNewick()).isEqualTo("((A:2.0,C:2.0):1.0,B:3.0):0.0");
+        assertTreeIsConnected(tree.getRoot(), "A", "B", "C");
     }
 
     @ParameterizedTest(name = "{0}, seed={1}")

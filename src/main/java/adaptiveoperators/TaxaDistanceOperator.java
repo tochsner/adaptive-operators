@@ -26,7 +26,8 @@ public class TaxaDistanceOperator extends TreeOperator {
             new ArrayList<>());
 
     private static final int BURN_IN = 20_000;
-    private static final int NUM_TRAINING = 60_000;
+    private static final int START_TRAINING = 100_000;
+    private static final int END_TRAINING = 900_000;
     private static final double MIN_LOG_VARIANCE = 1e-12;
 
     private Tree tree;
@@ -36,6 +37,8 @@ public class TaxaDistanceOperator extends TreeOperator {
     private LogNormalModel[] models;
     private Random random;
     private int count = 0;
+
+    double scaleFactor = 1.0;
 
     @Override
     public void initAndValidate() {
@@ -56,7 +59,11 @@ public class TaxaDistanceOperator extends TreeOperator {
         this.taxonPairs = sampleTaxonPairs(leafCount, numberOfPairs);
         this.models = new LogNormalModel[this.taxonPairs.length];
         for (int i = 0; i < this.models.length; i++) {
-            this.models[i] = new LogNormalModel();
+            TaxonPair pair = this.taxonPairs[i];
+            double minimumDistance = Math.abs(
+                    this.tree.getNode(pair.firstTaxon).getHeight()
+                            - this.tree.getNode(pair.secondTaxon).getHeight());
+            this.models[i] = new LogNormalModel(minimumDistance);
         }
         this.random = new Random(Randomizer.nextLong());
     }
@@ -66,15 +73,19 @@ public class TaxaDistanceOperator extends TreeOperator {
         this.count++;
 
         if (this.count < BURN_IN) {
-            return this.alternativeOperators.get(Randomizer.nextInt(this.alternativeOperators.size())).proposal();
+            return proposeAlternativeOperator();
         }
 
-        recordDistances();
+        if (this.count < END_TRAINING) {
+            recordDistances();
+        }
 
-        if (this.count < NUM_TRAINING) {
-            return this.alternativeOperators.get(Randomizer.nextInt(this.alternativeOperators.size())).proposal();
-        } else if (this.count == NUM_TRAINING) {
+        if (this.count < START_TRAINING) {
+            return proposeAlternativeOperator();
+        } else if (this.count == START_TRAINING) {
             System.out.println("Adaptive tree starts");
+        } else if (this.count == END_TRAINING) {
+            System.out.println("Adaptive tree ends");
         }
 
         int pairIndex = Randomizer.nextInt(this.taxonPairs.length);
@@ -85,25 +96,40 @@ public class TaxaDistanceOperator extends TreeOperator {
         Node nodeB = this.tree.getNode(pair.secondTaxon);
         double oldDistance = getDistance(nodeA, nodeB);
 
-        try {
-            double newDistance = model.sample(this.random);
-            double logDensityOld = model.logDensity(oldDistance);
-            double logDensityNew = model.logDensity(newDistance);
+        double newDistance = model.sample(this.random, this.scaleFactor);
+        double logDensityOld = model.logDensity(oldDistance, this.scaleFactor);
+        double logDensityNew = model.logDensity(newDistance, this.scaleFactor);
 
-            if (!Double.isFinite(logDensityOld) || !Double.isFinite(logDensityNew)) {
-                return Double.NEGATIVE_INFINITY;
-            }
-
-            TreeUtils.changeNodeDistance(nodeA, nodeB, newDistance, this.random);
-            return logDensityOld - logDensityNew;
-        } catch (RuntimeException e) {
+        if (!Double.isFinite(logDensityOld) || !Double.isFinite(logDensityNew)) {
             return Double.NEGATIVE_INFINITY;
         }
+
+        double logFactor = TreeUtils.changeNodeDistance(nodeA, nodeB, newDistance, this.random);
+        return logDensityOld - logDensityNew - logFactor;
     }
 
     @Override
     public List<StateNode> listStateNodes() {
         return List.of(this.tree);
+    }
+
+    @Override
+    public double getCoercableParameterValue() {
+        return scaleFactor;
+    }
+
+    @Override
+    public void setCoercableParameterValue(double value) {
+        scaleFactor = value;
+    }
+
+    @Override
+    public void optimize(double logAlpha) {
+        if (2*START_TRAINING < this.count) {
+            double delta = this.calcDelta(logAlpha);
+            delta += Math.log(this.scaleFactor);
+            this.scaleFactor = Math.exp(delta);
+        }
     }
 
     private void recordDistances() {
@@ -113,6 +139,14 @@ public class TaxaDistanceOperator extends TreeOperator {
                     this.tree.getNode(pair.firstTaxon),
                     this.tree.getNode(pair.secondTaxon)));
         }
+    }
+
+    private double proposeAlternativeOperator() {
+        if (this.alternativeOperators.isEmpty()) {
+            return 0.0;
+        }
+
+        return this.alternativeOperators.get(Randomizer.nextInt(this.alternativeOperators.size())).proposal();
     }
 
     private static double getDistance(Node nodeA, Node nodeB) {
@@ -142,16 +176,26 @@ public class TaxaDistanceOperator extends TreeOperator {
     }
 
     private static class LogNormalModel {
+        private final double offset;
         private int count = 0;
         private double meanLogDistance = 0.0;
         private double m2LogDistance = 0.0;
 
+        private LogNormalModel(double offset) {
+            if (!Double.isFinite(offset) || offset < 0.0) {
+                throw new IllegalArgumentException("Log-normal offset must be a finite non-negative value");
+            }
+
+            this.offset = offset;
+        }
+
         private void record(double distance) {
-            if (!Double.isFinite(distance) || distance <= 0.0) {
+            double shiftedDistance = distance - this.offset;
+            if (!Double.isFinite(shiftedDistance) || shiftedDistance <= 0.0) {
                 return;
             }
 
-            double logDistance = Math.log(distance);
+            double logDistance = Math.log(shiftedDistance);
             this.count++;
             double delta = logDistance - this.meanLogDistance;
             this.meanLogDistance += delta / this.count;
@@ -159,29 +203,30 @@ public class TaxaDistanceOperator extends TreeOperator {
             this.m2LogDistance += delta * delta2;
         }
 
-        private double sample(Random random) {
-            double standardDeviation = Math.sqrt(getVariance());
-            return Math.exp(this.meanLogDistance + standardDeviation * random.nextGaussian());
+        private double sample(Random random, double scaleFactor) {
+            double standardDeviation = Math.sqrt(getVariance(scaleFactor));
+            return this.offset + Math.exp(this.meanLogDistance + standardDeviation * random.nextGaussian());
         }
 
-        private double logDensity(double distance) {
-            if (!Double.isFinite(distance) || distance <= 0.0) {
+        private double logDensity(double distance, double scaleFactor) {
+            double shiftedDistance = distance - this.offset;
+            if (!Double.isFinite(shiftedDistance) || shiftedDistance <= 0.0) {
                 return Double.NEGATIVE_INFINITY;
             }
 
-            double variance = getVariance();
-            double logDistance = Math.log(distance);
+            double variance = getVariance(scaleFactor);
+            double logDistance = Math.log(shiftedDistance);
             double diff = logDistance - this.meanLogDistance;
-            return -Math.log(distance)
+            return -Math.log(shiftedDistance)
                     - 0.5 * (Math.log(2.0 * Math.PI * variance) + diff * diff / variance);
         }
 
-        private double getVariance() {
+        private double getVariance(double scaleFactor) {
             if (this.count < 2) {
                 throw new IllegalStateException("At least two distances are required to sample a log-normal model");
             }
 
-            return Math.max(this.m2LogDistance / (this.count - 1), MIN_LOG_VARIANCE);
+            return scaleFactor * Math.max(this.m2LogDistance / (this.count - 1), MIN_LOG_VARIANCE);
         }
     }
 

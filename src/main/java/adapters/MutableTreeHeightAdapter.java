@@ -7,7 +7,7 @@ import beast.base.inference.StateNode;
 
 import java.util.List;
 
-public class TreeHeightAdapter extends BEASTObject implements Adapter {
+public class MutableTreeHeightAdapter extends BEASTObject implements Adapter {
 
     public final Input<Tree> treeInput = new Input<>("tree", "");
 
@@ -20,21 +20,21 @@ public class TreeHeightAdapter extends BEASTObject implements Adapter {
 
     @Override
     public int getNumImmutable() {
-        return 1;
+        return 0;
     }
 
     public int getNumMutable() {
-        return 0;
+        return 1;
     }
 
     @Override
     public double[] getImmutable(int nodeId) {
-        return new double[]{Math.log(this.tree.getRoot().getHeight())};
+        return new double[0];
     }
 
     @Override
     public double[] getMutable(int nodeId) {
-        return new double[0];
+        return new double[]{Math.log(this.tree.getRoot().getHeight())};
     }
 
     @Override
