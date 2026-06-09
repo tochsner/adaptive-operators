@@ -8,10 +8,12 @@ import adapters.LocalTreeAdapter;
 import adapters.TreeHeightAdapter;
 import adapters.MutableTreeHeightAdapter;
 import adapters.NodePositionAdapter;
+import mala.CubeMAPGuidedMALAOperator;
 import adapters.NodeValueAdapter;
 import adaptiveoperators.TaxaDistanceOperator;
 import adaptiveoperators.TripletDistanceOperator;
 import adapters.TaxaDistanceAdapterGenerator;
+import adapters.CubeAdapter;
 import transforms.RealVectorIdentityTransform;
 import transforms.IntVectorIdentityTransform;
 import transforms.RealScalarSigmoidTransform;
@@ -31,6 +33,7 @@ open module adaptiveoperators {
     requires org.apache.commons.math4.legacy;
     requires org.apache.commons.math4.legacy.exception;
     requires beagle;
+    requires org.apache.commons.math4.legacy.core;
 
     exports adaptiveoperators;
     exports weightoptimization;
@@ -43,9 +46,11 @@ open module adaptiveoperators {
             StepOutShrinkSliceOperator,
             MultivariateStepOutShrinkSliceOperator,
             MAPGuidedMALAOperator,
+            CubeAdapter,
             SliceMCMC,
             TreeTripletAdapter,
             LinCombSliceOperator,
+            CubeMAPGuidedMALAOperator,
             LocalTreeAdapter,
             TreeHeightAdapter,
             MutableTreeHeightAdapter,

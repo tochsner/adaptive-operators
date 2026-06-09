@@ -2,28 +2,63 @@ package adapters;
 
 import beast.base.core.BEASTObject;
 import beast.base.core.Input;
+import beast.base.evolution.alignment.Alignment;
+import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import beast.base.inference.StateNode;
+import beast.base.spec.evolution.tree.ClusterTree;
+import beast.base.spec.inference.parameter.RealScalarParam;
+import beast.base.spec.inference.parameter.RealVectorParam;
 
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Random;
+import java.util.*;
 
-public class CubeAdapter extends BEASTObject implements Adapter {
+public class CubeAdapter extends BEASTObject implements MAPAdapter {
 
     public final Input<Tree> treeInput = new Input<>("tree", "");
 
+    public final Input<Alignment> alignmentInput = new Input<>("alignment", "");
+    public final Input<RealScalarParam<?>> clockRateInput = new Input<>("clockRate", "", null, Input.Validate.OPTIONAL);
+    public final Input<RealVectorParam<?>> clockRatesInput = new Input<>("clockRates", "", null, Input.Validate.OPTIONAL);
+
     private Tree tree;
+    private RealScalarParam<?> clockRate;
+    private RealVectorParam<?> clockRates;
+
     private LinkedList<Integer> cube;
     private Random random;
+
+    private List<Tree> mapTrees;
 
     @Override
     public void initAndValidate() {
         this.tree = this.treeInput.get();
+        this.clockRate = this.clockRateInput.get();
+        this.clockRates = this.clockRatesInput.get();
         this.random = new Random();
 
+        this.initMapTrees();
         this.refresh();
     }
+
+    private void initMapTrees() {
+        this.mapTrees = new ArrayList<>();
+        this.addMapTree(ClusterTree.Type.single);
+        this.addMapTree(ClusterTree.Type.average);
+        this.addMapTree(ClusterTree.Type.complete);
+        this.addMapTree(ClusterTree.Type.neighborjoining2);
+        this.addMapTree(ClusterTree.Type.upgma);
+    }
+
+    private void addMapTree(ClusterTree.Type type) {
+        ClusterTree tree = new ClusterTree();
+        tree.clusterTypeInput.setTypedValue(type, tree);
+        tree.dataInput.setTypedValue(this.alignmentInput.get(), tree);
+        tree.m_traitList.setTypedValue(this.tree.m_traitList.get(), tree);
+        tree.initAndValidate();
+
+        this.mapTrees.add(tree);
+    }
+
 
     @Override
     public int getNumImmutable() {
@@ -63,9 +98,27 @@ public class CubeAdapter extends BEASTObject implements Adapter {
         return 0.0;
     }
 
+    private double[] getBranches(Tree tree) {
+        double[] branches = new double[tree.getNodeCount() - 1];
+
+        for (Node node : tree.getNodesAsArray()) {
+            if (node.isRoot()) continue;
+            branches[node.getNr()] = node.getParent().getHeight() - node.getHeight();
+        }
+
+        return branches;
+    }
+
     @Override
     public double getLogJacobianCorrection(int nodeId) {
-        return 0;
+        double logCorrection = 0.0;
+
+        double[] cube = this.getMutable(nodeId);
+        for (double v : cube) {
+            logCorrection -= v;
+        }
+
+        return logCorrection;
     }
 
     @Override
@@ -80,6 +133,24 @@ public class CubeAdapter extends BEASTObject implements Adapter {
 
     public LinkedList<Integer> getCube() {
         return this.cube;
+    }
+
+    @Override
+    public double[] getMutableMAP() {
+        Tree randomMapTree = this.mapTrees.get(this.random.nextInt(this.mapTrees.size()));
+
+        double[] cube = TreeUtils.getCubeDistances(this.tree, this.cube);
+        double[] mapCube = TreeUtils.getCubeDistances(randomMapTree, this.cube);
+
+        double sumDistances = Arrays.stream(cube).sum();
+        double mapSumDistances = Arrays.stream(mapCube).sum();
+
+        for (int i = 0; i < this.getNumMutable(); i++) {
+            mapCube[i] *= sumDistances / mapSumDistances;
+            mapCube[i] = Math.log(mapCube[i]);
+        }
+
+        return mapCube;
     }
 
 }

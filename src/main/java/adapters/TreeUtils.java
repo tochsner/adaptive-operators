@@ -24,6 +24,11 @@ public class TreeUtils {
         return new MRCA(nodeA, path);
     }
 
+    public static double getDistance(Node nodeA, Node nodeB, Tree tree) {
+        Node mrca = TreeUtils.getCommonAncestor(nodeA, nodeB).mrca();
+        return 2.0 * mrca.getHeight() - nodeA.getHeight() - nodeB.getHeight();
+    }
+
     public static double[] getCubeDistances(Tree tree, LinkedList<Integer> cube) {
         double[] distances = new double[cube.size() - 1];
 
