@@ -9,6 +9,7 @@ import beast.base.inference.StateNode;
 import beast.base.spec.evolution.tree.ClusterTree;
 import beast.base.spec.inference.parameter.RealScalarParam;
 import beast.base.spec.inference.parameter.RealVectorParam;
+import mala.SubsetJukesCantorDistance;
 
 import java.util.*;
 
@@ -42,23 +43,21 @@ public class CubeAdapter extends BEASTObject implements MAPAdapter {
 
     private void initMapTrees() {
         this.mapTrees = new ArrayList<>();
-        this.addMapTree(ClusterTree.Type.single);
-        this.addMapTree(ClusterTree.Type.average);
-        this.addMapTree(ClusterTree.Type.complete);
-        this.addMapTree(ClusterTree.Type.neighborjoining2);
         this.addMapTree(ClusterTree.Type.upgma);
     }
 
     private void addMapTree(ClusterTree.Type type) {
-        ClusterTree tree = new ClusterTree();
-        tree.clusterTypeInput.setTypedValue(type, tree);
-        tree.dataInput.setTypedValue(this.alignmentInput.get(), tree);
-        tree.m_traitList.setTypedValue(this.tree.m_traitList.get(), tree);
-        tree.initAndValidate();
+        for (int i = 0; i < 10; i++) {
+            ClusterTree tree = new ClusterTree();
+            tree.clusterTypeInput.setTypedValue(type, tree);
+            tree.distanceInput.setTypedValue(new SubsetJukesCantorDistance(0.5), tree);
+            tree.dataInput.setTypedValue(this.alignmentInput.get(), tree);
+            tree.m_traitList.setTypedValue(this.tree.m_traitList.get(), tree);
+            tree.initAndValidate();
 
-        this.mapTrees.add(tree);
+            this.mapTrees.add(tree);
+        }
     }
-
 
     @Override
     public int getNumImmutable() {

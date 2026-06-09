@@ -12,11 +12,11 @@ import java.util.*;
 public class CubeMAPGuidedMALAOperator extends AdaptiveOperator {
 
     public final Input<CubeAdapter> cubeAdapterInput = new Input<>("cube", "");
-    public final Input<Double> betaInput = new Input<>("beta", "", 10.0);
+    public final Input<Double> betaInput = new Input<>("beta", "", 1.0);
 
     private CubeAdapter cubeAdapter;
     private double beta;
-    private double alpha = 0.01;
+    private double alpha = 1.0;
 
     private Map<Pair<Integer, Integer>, RunningVariance> runningVariances;
 
