@@ -89,6 +89,56 @@
             </exclusions>
         </dependency>
 
+        <!-- Deep Learning -->
+        <dependency>
+            <groupId>ai.djl</groupId>
+            <artifactId>api</artifactId>
+            <version>0.36.0</version>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>ai.djl.pytorch</groupId>
+            <artifactId>pytorch-engine</artifactId>
+            <version>0.36.0</version>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>ai.djl</groupId>
+            <artifactId>model-zoo</artifactId>
+            <version>0.36.0</version>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>ai.djl.pytorch</groupId>
+            <artifactId>pytorch-native-cpu</artifactId>
+            <classifier>osx-aarch64</classifier>
+            <version>2.7.1</version>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>ai.djl.pytorch</groupId>
+            <artifactId>pytorch-jni</artifactId>
+            <version>2.7.1-0.36.0</version>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>ai.djl.pytorch</groupId>
+            <artifactId>pytorch-model-zoo</artifactId>
+            <version>0.36.0</version>
+        </dependency>
+        <dependency>
+            <groupId>ai.djl</groupId>
+            <artifactId>basicdataset</artifactId>
+            <version>0.36.0</version>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-simple</artifactId>
+            <version>2.0.18</version>
+            <scope>test</scope>
+        </dependency>
+
         <!-- needed to run BeastMain from this module in IntelliJ -->
         <dependency>
             <groupId>io.github.compevol</groupId>

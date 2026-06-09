@@ -34,6 +34,12 @@ open module adaptiveoperators {
     requires org.apache.commons.math4.legacy.exception;
     requires beagle;
     requires org.apache.commons.math4.legacy.core;
+    requires ai.djl.api;
+    requires ai.djl.pytorch_engine;
+    requires ai.djl.basicdataset;
+    requires ai.djl.model_zoo;
+    requires ai.djl.pytorch_model_zoo;
+    requires org.slf4j;
 
     exports adaptiveoperators;
     exports weightoptimization;
