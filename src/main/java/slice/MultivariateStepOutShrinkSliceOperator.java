@@ -48,6 +48,8 @@ public class MultivariateStepOutShrinkSliceOperator extends SliceOperator {
 
     @Override
     public double proposal(Supplier<Double> computeCurrentLogLikelihood) {
+        this.refreshAdapters();
+
         // choose node and direction to work on
 
         int nodeId = this.chooseNodeId();
@@ -174,6 +176,12 @@ public class MultivariateStepOutShrinkSliceOperator extends SliceOperator {
         }
 
         return direction;
+    }
+
+    private void refreshAdapters() {
+        for (Adapter adapter : this.adapters) {
+            adapter.refresh();
+        }
     }
 
     private void updateAdapters(double[] mutable, int nodeId) {

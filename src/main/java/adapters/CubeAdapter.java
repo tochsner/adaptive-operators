@@ -97,17 +97,6 @@ public class CubeAdapter extends BEASTObject implements MAPAdapter {
         return 0.0;
     }
 
-    private double[] getBranches(Tree tree) {
-        double[] branches = new double[tree.getNodeCount() - 1];
-
-        for (Node node : tree.getNodesAsArray()) {
-            if (node.isRoot()) continue;
-            branches[node.getNr()] = node.getParent().getHeight() - node.getHeight();
-        }
-
-        return branches;
-    }
-
     @Override
     public double getLogJacobianCorrection(int nodeId) {
         double logCorrection = 0.0;

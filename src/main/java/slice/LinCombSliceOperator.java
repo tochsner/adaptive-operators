@@ -15,7 +15,7 @@ import java.util.function.Supplier;
 
 public class LinCombSliceOperator extends SliceOperator {
 
-    private static final double BURN_IN = 10_000;
+    private static final double BURN_IN = 1_000;
     private static final double NUM_RECENT_SAMPLES = 10_000;
 
     private static final double TARGET_STEP_OUT_COUNT = 1.0;
@@ -62,6 +62,8 @@ public class LinCombSliceOperator extends SliceOperator {
 
     @Override
     public double proposal(Supplier<Double> computeCurrentLogLikelihood) {
+        this.refreshAdapters();
+
         // choose mutable parameter to work on
 
         int nodeId = this.chooseNodeId();
@@ -77,6 +79,7 @@ public class LinCombSliceOperator extends SliceOperator {
 
         this.remember(currentState);
         if (this.mostRecentSamples.size() < BURN_IN) return Double.NEGATIVE_INFINITY;
+        if (this.mostRecentSamples.size() == BURN_IN) System.out.println("Start lincomb slicing");
 
         final double[] otherStateA = this.mostRecentSamples.get(
                 Randomizer.nextInt(this.mostRecentSamples.size())
@@ -189,6 +192,8 @@ public class LinCombSliceOperator extends SliceOperator {
         double windowSize = Math.exp(logWindowSize);
 
         this.initialWindowSize = Math.min(MAX_WINDOW_SIZE, Math.max(MIN_WINDOW_SIZE, windowSize));
+
+        if (this.windowUpdateCount % 100 == 0) System.out.println(this.initialWindowSize);
     }
 
     private void remember(double[] sample) {
@@ -198,6 +203,13 @@ public class LinCombSliceOperator extends SliceOperator {
             this.mostRecentSamples.removeFirst();
         }
     }
+
+    private void refreshAdapters() {
+        for (Adapter adapter : this.adapters) {
+            adapter.refresh();
+        }
+    }
+
 
     private void updateAdapters(double[] mutable, int nodeId) {
         int idx = 0;
