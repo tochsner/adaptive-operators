@@ -25,6 +25,10 @@ import slice.LinCombSliceOperator;
 import slice.MultivariateStepOutShrinkSliceOperator;
 import mala.MAPGuidedMALAOperator;
 import mcmc.SliceMCMC;
+import mcmc.MLMCMC;
+import delayedacceptance.ApproximateDelayedAcceptanceMCMC;
+import delayedacceptance.DelayedAcceptanceMCMC;
+import delayedacceptance.MLPPosteriorApproximation;
 
 open module adaptiveoperators {
     requires beast.pkgmgmt;
@@ -62,6 +66,10 @@ open module adaptiveoperators {
             MutableTreeHeightAdapter,
             NodeValueAdapter,
             NodePositionAdapter,
+            MLMCMC,
+            ApproximateDelayedAcceptanceMCMC,
+            DelayedAcceptanceMCMC,
+            MLPPosteriorApproximation,
             TaxaDistanceOperator,
             TripletDistanceOperator,
             RealVectorIdentityTransform,
