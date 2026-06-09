@@ -3,7 +3,6 @@ package adapters;
 import beast.base.core.BEASTObject;
 import beast.base.core.Input;
 import beast.base.evolution.alignment.Alignment;
-import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import beast.base.inference.StateNode;
 import beast.base.spec.evolution.tree.ClusterTree;

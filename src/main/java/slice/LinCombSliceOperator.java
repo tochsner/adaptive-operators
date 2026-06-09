@@ -2,6 +2,7 @@ package slice;
 
 import adapters.Adapter;
 import adapters.AdapterGenerator;
+import adapters.CubeAdapter;
 import beast.base.core.Input;
 import beast.base.evolution.tree.Tree;
 import beast.base.inference.StateNode;
@@ -15,7 +16,7 @@ import java.util.function.Supplier;
 
 public class LinCombSliceOperator extends SliceOperator {
 
-    private static final double BURN_IN = 1_000;
+    private static final double BURN_IN = 9_000;
     private static final double NUM_RECENT_SAMPLES = 10_000;
 
     private static final double TARGET_STEP_OUT_COUNT = 1.0;
@@ -68,13 +69,21 @@ public class LinCombSliceOperator extends SliceOperator {
 
         int nodeId = this.chooseNodeId();
 
+        double[] learningRates = new double[this.totalNumMutable];
         double[] currentState = new double[this.totalNumMutable];
         int idx = 0;
         for (Adapter adapter : this.adapters) {
             System.arraycopy(
                     adapter.getMutable(nodeId), 0, currentState, idx, adapter.getNumMutable()
             );
-            idx += adapter.getNumMutable();
+
+            for (int i = 0; i < adapter.getNumMutable(); i++) {
+                if (adapter instanceof CubeAdapter) {
+                    learningRates[idx++] = 0.1;
+                } else {
+                    learningRates[idx++] = 1.0;
+                }
+            }
         }
 
         this.remember(currentState);
@@ -96,7 +105,7 @@ public class LinCombSliceOperator extends SliceOperator {
             double[] proposal = new double[this.totalNumMutable];
 
             for (int i = 0; i < this.totalNumMutable; i++) {
-                proposal[i] = currentState[i] + x * (otherStateA[i] - otherStateB[i]);
+                proposal[i] = currentState[i] + x * (otherStateA[i] - otherStateB[i]) * learningRates[i];
             }
 
             try {
@@ -192,8 +201,6 @@ public class LinCombSliceOperator extends SliceOperator {
         double windowSize = Math.exp(logWindowSize);
 
         this.initialWindowSize = Math.min(MAX_WINDOW_SIZE, Math.max(MIN_WINDOW_SIZE, windowSize));
-
-        if (this.windowUpdateCount % 100 == 0) System.out.println(this.initialWindowSize);
     }
 
     private void remember(double[] sample) {

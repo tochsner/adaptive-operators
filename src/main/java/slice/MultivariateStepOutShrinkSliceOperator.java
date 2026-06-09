@@ -2,6 +2,7 @@ package slice;
 
 import adapters.Adapter;
 import adapters.AdapterGenerator;
+import adapters.CubeAdapter;
 import beast.base.core.Input;
 import beast.base.evolution.tree.Tree;
 import beast.base.inference.StateNode;
@@ -54,6 +55,18 @@ public class MultivariateStepOutShrinkSliceOperator extends SliceOperator {
 
         int nodeId = this.chooseNodeId();
 
+        double[] learningRates = new double[this.totalNumMutable];
+        int idx = 0;
+        for (Adapter adapter : this.adapters) {
+            for (int i = 0; i < adapter.getNumMutable(); i++) {
+                if (adapter instanceof CubeAdapter) {
+                    learningRates[idx++] = 0.1;
+                } else {
+                    learningRates[idx++] = 1.0;
+                }
+            }
+        }
+
         final double[] x0 = this.getMutable(nodeId);
         final double[] direction = this.sampleDirection();
 
@@ -67,7 +80,7 @@ public class MultivariateStepOutShrinkSliceOperator extends SliceOperator {
             double[] proposal = new double[this.totalNumMutable];
 
             for (int i = 0; i < this.totalNumMutable; i++) {
-                proposal[i] = x0[i] + t * direction[i];
+                proposal[i] = x0[i] + t * direction[i] * learningRates[i];
             }
 
             try {
