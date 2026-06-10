@@ -11,6 +11,7 @@ import ai.djl.nn.SequentialBlock;
 import ai.djl.nn.core.Linear;
 import ai.djl.training.DefaultTrainingConfig;
 import ai.djl.training.EasyTrain;
+import ai.djl.training.GradientCollector;
 import ai.djl.training.Trainer;
 import ai.djl.training.dataset.ArrayDataset;
 import ai.djl.training.dataset.Batch;
@@ -81,6 +82,26 @@ public class MLP implements AutoCloseable {
             NDArray input = inferenceManager.create(toFloatArray(inputs), new Shape(1, inputDim));
             NDArray output = trainer.evaluate(new NDList(input)).singletonOrThrow();
             return toDoubleArray(output.toFloatArray());
+        }
+    }
+
+    public double[] getGradient(double[] inputs) {
+        ensureOpen();
+        validateInput(inputs);
+
+        if (this.outputDim != 1) {
+            throw new UnsupportedOperationException("Gradients are only supported for univariate functions.");
+        }
+
+        try (NDManager gradientManager = manager.newSubManager();
+                GradientCollector collector = trainer.newGradientCollector()) {
+            NDArray input = gradientManager.create(toFloatArray(inputs), new Shape(1, inputDim));
+            input.setRequiresGradient(true);
+            NDArray output = trainer.forward(new NDList(input)).singletonOrThrow();
+            collector.backward(output);
+            double[] gradient = toDoubleArray(input.getGradient().toFloatArray());
+            collector.zeroGradients();
+            return gradient;
         }
     }
 
