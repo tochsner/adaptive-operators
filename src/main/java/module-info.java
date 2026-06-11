@@ -24,8 +24,10 @@ import slice.StepOutShrinkSliceOperator;
 import slice.LinCombSliceOperator;
 import slice.MultivariateStepOutShrinkSliceOperator;
 import mala.MAPGuidedMALAOperator;
+import mala.MALAOperator;
 import mcmc.SliceMCMC;
 import mcmc.MLMCMC;
+import mcmc.MalaMCMC;
 import delayedacceptance.ApproximateDelayedAcceptanceMCMC;
 import delayedacceptance.DelayedAcceptanceMCMC;
 import delayedacceptance.MLPPosteriorApproximation;
@@ -57,8 +59,10 @@ open module adaptiveoperators {
             MultivariateStepOutShrinkSliceOperator,
             MAPGuidedMALAOperator,
             CubeAdapter,
+            MalaMCMC,
             SliceMCMC,
             TreeTripletAdapter,
+            MALAOperator,
             LinCombSliceOperator,
             CubeMAPGuidedMALAOperator,
             LocalTreeAdapter,

@@ -66,6 +66,18 @@ class MultivariateNormalSamplerTest {
         assertThat(sampler.logDensity(conditions, valuesAtConditionalMean, 1.0)).isCloseTo(expected, within(1e-12));
     }
 
+    @Test
+    void centeredSamplerExposesRegularizedCovarianceUsedByDensity() {
+        CenteredMultivariateNormalSampler sampler = new CenteredMultivariateNormalSampler(1);
+
+        double variance = sampler.getCovariance().getEntry(0, 0);
+        double expected = -0.5 * (Math.log(2.0 * Math.PI) + Math.log(variance));
+
+        assertThat(variance).isGreaterThan(0.0);
+        assertThat(sampler.logDensity(new double[]{}, new double[]{0.0}, 1.0))
+                .isCloseTo(expected, within(1e-12));
+    }
+
     private static double[] batchMean(double[][] observations) {
         double[] mean = new double[observations[0].length];
         for (double[] observation : observations) {

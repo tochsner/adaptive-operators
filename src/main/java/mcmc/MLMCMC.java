@@ -15,15 +15,19 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
-public class MLMCMC extends MCMC {
+public class MLMCMC extends MalaMCMC {
 
     private static final Path RESULTS_PATH = Path.of("results.csv");
-    private MLP mlp;
     public Input<List<Adapter>> adaptersInput = new Input<>("adapter", "", new ArrayList<>());
 
     private List<Adapter> adapters;
     private int inputDim = 0;
     private int outputDim = 1;
+
+    private int BURN_IN = 50_000;
+
+    private MLP mlp;
+    private double offset = 0.0;
 
 
     @Override
@@ -49,14 +53,19 @@ public class MLMCMC extends MCMC {
     }
 
     protected Operator propagateState(final long sampleNr) {
-        double[] state = this.getState();
-        double logLikelihood = this.posterior.calculateLogP();
-
-        this.mlp.record(state, new double[] {logLikelihood});
-
-        if (Randomizer.nextDouble() < 0.001) {
-            appendResult(this.mlp.runInference(state)[0], logLikelihood);
+        if (sampleNr < this.BURN_IN) {
+            return super.propagateState(sampleNr);
+        } else if (this.offset == 0.0) {
+            this.offset = this.posterior.calculateLogP();
+            System.out.println("Offset is " + this.offset);
         }
+
+        double[] state = this.getState();
+        this.mlp.record(state, new double[] {oldLogLikelihood - this.offset});
+
+        // if (Randomizer.nextDouble() < 0.001) {
+            appendResult(this.mlp.runInference(state)[0] + this.offset, oldLogLikelihood);
+        // }
 
         return super.propagateState(sampleNr);
     }

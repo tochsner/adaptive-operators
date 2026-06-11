@@ -19,17 +19,17 @@ public class RealScalarLogTransform extends BEASTObject implements RealScalarTra
 
     @Override
     public Double get() {
-        return Math.log(this.parameter.get());
+        return Math.log(this.parameter.get() - this.parameter.getLower());
     }
 
     @Override
     public void set(Double value) {
-        this.parameter.set(Math.exp(value));
+        this.parameter.set(Math.exp(value) + this.parameter.getLower());
     }
 
     @Override
     public double getLogJacobianCorrection() {
-        return -Math.log(this.parameter.get());
+        return -this.get();
     }
 
     @Override

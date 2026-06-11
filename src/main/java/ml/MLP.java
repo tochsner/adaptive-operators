@@ -23,14 +23,19 @@ import ai.djl.translate.TranslateException;
 
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.Random;
 
 /**
  * Trains an MLP in an incremental fashion.
  */
 public class MLP implements AutoCloseable {
 
-    private static final int BATCH_SIZE = 128;
-    private static final float LEARNING_RATE = 0.01f;
+    private static final int BATCH_SIZE = 32;
+    private static final int FRESH_BATCH_SIZE = BATCH_SIZE / 2;
+    private static final int REPLAY_BATCH_SIZE = BATCH_SIZE - FRESH_BATCH_SIZE;
+    private static final int REPLAY_CAPACITY = 10_000;
+    private static final int TRAINING_PASSES = 4;
+    private static final float LEARNING_RATE = 0.001f;
     private final int inputDim;
     private final int outputDim;
     private final NDManager manager;
@@ -38,9 +43,18 @@ public class MLP implements AutoCloseable {
     private final Trainer trainer;
     private final float[] inputBatch;
     private final float[] outputBatch;
+    private final Random random;
+    private final float[] replayInputs;
+    private final float[] replayOutputs;
     private int batchSize;
+    private int replaySize;
+    private int replayNextIndex;
     private boolean closed;
 
+    /**
+     * Creates an MLP with the given input and output dimensions and initializes its
+     * trainer. The network is trained incrementally as samples are recorded.
+     */
     public MLP(int inputDim, int outputDim) {
         if (inputDim <= 0) {
             throw new IllegalArgumentException("inputDim must be positive");
@@ -56,11 +70,21 @@ public class MLP implements AutoCloseable {
         this.trainer = model.newTrainer(setupTrainingConfig());
         this.trainer.setMetrics(new Metrics());
         this.trainer.initialize(new Shape(1, inputDim));
-        this.inputBatch = new float[BATCH_SIZE * inputDim];
-        this.outputBatch = new float[BATCH_SIZE * outputDim];
+        this.inputBatch = new float[FRESH_BATCH_SIZE * inputDim];
+        this.outputBatch = new float[FRESH_BATCH_SIZE * outputDim];
+        this.random = new Random();
+        this.replayInputs = new float[REPLAY_CAPACITY * inputDim];
+        this.replayOutputs = new float[REPLAY_CAPACITY * outputDim];
     }
 
+    /**
+     * Buffers a single training example and triggers a training step once a full batch
+     * has accumulated. Examples containing non-finite values are silently ignored.
+     */
     public void record(double[] inputs, double[] output) {
+        if (!Arrays.stream(inputs).allMatch(Double::isFinite)) return;
+        if (!Arrays.stream(output).allMatch(Double::isFinite)) return;
+
         ensureOpen();
         validateInput(inputs);
         validateOutput(output);
@@ -69,11 +93,14 @@ public class MLP implements AutoCloseable {
         copy(output, outputBatch, batchSize * outputDim);
         batchSize++;
 
-        if (batchSize == BATCH_SIZE) {
+        if (batchSize == FRESH_BATCH_SIZE) {
             trainBatch();
         }
     }
 
+    /**
+     * Runs a forward pass and returns the network's prediction for the given input.
+     */
     public double[] runInference(double[] inputs) {
         ensureOpen();
         validateInput(inputs);
@@ -85,6 +112,10 @@ public class MLP implements AutoCloseable {
         }
     }
 
+    /**
+     * Computes the gradient of the scalar network output with respect to the input.
+     * Only supported when {@code outputDim == 1}.
+     */
     public double[] getGradient(double[] inputs) {
         ensureOpen();
         validateInput(inputs);
@@ -99,42 +130,83 @@ public class MLP implements AutoCloseable {
             input.setRequiresGradient(true);
             NDArray output = trainer.forward(new NDList(input)).singletonOrThrow();
             collector.backward(output);
-            double[] gradient = toDoubleArray(input.getGradient().toFloatArray());
-            collector.zeroGradients();
-            return gradient;
+            return toDoubleArray(input.getGradient().toFloatArray());
         }
     }
 
     private void trainBatch() {
         ensureOpen();
-        float[] inputs = Arrays.copyOf(inputBatch, batchSize * inputDim);
-        float[] outputs = Arrays.copyOf(outputBatch, batchSize * outputDim);
+        int sampledReplaySize = Math.min(REPLAY_BATCH_SIZE, replaySize);
+        int trainingSize = batchSize + sampledReplaySize;
+        float[] inputs = new float[trainingSize * inputDim];
+        float[] outputs = new float[trainingSize * outputDim];
+        System.arraycopy(inputBatch, 0, inputs, 0, batchSize * inputDim);
+        System.arraycopy(outputBatch, 0, outputs, 0, batchSize * outputDim);
+        copyReplaySamples(inputs, outputs, sampledReplaySize);
 
         try (NDManager batchManager = manager.newSubManager()) {
-            NDArray input = batchManager.create(inputs, new Shape(batchSize, inputDim));
-            NDArray output = batchManager.create(outputs, new Shape(batchSize, outputDim));
+            NDArray input = batchManager.create(inputs, new Shape(trainingSize, inputDim));
+            NDArray output = batchManager.create(outputs, new Shape(trainingSize, outputDim));
             ArrayDataset dataset =
                     new ArrayDataset.Builder()
                             .setData(input)
                             .optLabels(output)
-                            .setSampling(batchSize, false)
+                            .setSampling(trainingSize, false)
                             .build();
             try (Batch batch = trainer.iterateDataset(dataset).iterator().next()) {
-                EasyTrain.trainBatch(trainer, batch);
-                trainer.step();
+                for (int i = 0; i < TRAINING_PASSES; i++) {
+                    EasyTrain.trainBatch(trainer, batch);
+                    trainer.step();
+                }
             }
+            appendFreshBatchToReplayBuffer();
             batchSize = 0;
         } catch (IOException | TranslateException e) {
             throw new IllegalStateException("failed to train MLP batch", e);
         }
     }
 
+    private void copyReplaySamples(float[] inputs, float[] outputs, int sampledReplaySize) {
+        int inputTargetOffset = batchSize * inputDim;
+        int outputTargetOffset = batchSize * outputDim;
+        for (int i = 0; i < sampledReplaySize; i++) {
+            int replayIndex = random.nextInt(replaySize);
+            System.arraycopy(
+                    replayInputs,
+                    replayIndex * inputDim,
+                    inputs,
+                    inputTargetOffset + i * inputDim,
+                    inputDim);
+            System.arraycopy(
+                    replayOutputs,
+                    replayIndex * outputDim,
+                    outputs,
+                    outputTargetOffset + i * outputDim,
+                    outputDim);
+        }
+    }
+
+    private void appendFreshBatchToReplayBuffer() {
+        for (int i = 0; i < batchSize; i++) {
+            System.arraycopy(
+                    inputBatch,
+                    i * inputDim,
+                    replayInputs,
+                    replayNextIndex * inputDim,
+                    inputDim);
+            System.arraycopy(
+                    outputBatch,
+                    i * outputDim,
+                    replayOutputs,
+                    replayNextIndex * outputDim,
+                    outputDim);
+            replayNextIndex = (replayNextIndex + 1) % REPLAY_CAPACITY;
+            replaySize = Math.min(replaySize + 1, REPLAY_CAPACITY);
+        }
+    }
+
     private static SequentialBlock createBlock(int outputDim) {
         return new SequentialBlock()
-                .add(Linear.builder().setUnits(256).build())
-                .add(Activation.sigmoidBlock())
-                .add(Linear.builder().setUnits(128).build())
-                .add(Activation.sigmoidBlock())
                 .add(Linear.builder().setUnits(128).build())
                 .add(Activation.sigmoidBlock())
                 .add(Linear.builder().setUnits(outputDim).build());
@@ -196,6 +268,10 @@ public class MLP implements AutoCloseable {
         }
     }
 
+    /**
+     * Releases the underlying trainer, model, and native memory manager. The instance
+     * must not be used after being closed.
+     */
     @Override
     public void close() {
         if (!closed) {
