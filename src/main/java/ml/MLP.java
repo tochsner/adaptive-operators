@@ -1,7 +1,6 @@
 package ml;
 
 import ai.djl.Model;
-import ai.djl.metric.Metrics;
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.NDManager;
@@ -10,18 +9,12 @@ import ai.djl.nn.Activation;
 import ai.djl.nn.SequentialBlock;
 import ai.djl.nn.core.Linear;
 import ai.djl.training.DefaultTrainingConfig;
-import ai.djl.training.EasyTrain;
 import ai.djl.training.GradientCollector;
 import ai.djl.training.Trainer;
-import ai.djl.training.dataset.ArrayDataset;
-import ai.djl.training.dataset.Batch;
-import ai.djl.training.listener.TrainingListener;
 import ai.djl.training.loss.Loss;
 import ai.djl.training.optimizer.Adam;
 import ai.djl.training.tracker.Tracker;
-import ai.djl.translate.TranslateException;
 
-import java.io.IOException;
 import java.util.Arrays;
 import java.util.Random;
 
@@ -34,8 +27,8 @@ public class MLP implements AutoCloseable {
     private static final int FRESH_BATCH_SIZE = BATCH_SIZE / 2;
     private static final int REPLAY_BATCH_SIZE = BATCH_SIZE - FRESH_BATCH_SIZE;
     private static final int REPLAY_CAPACITY = 10_000;
-    private static final int TRAINING_PASSES = 4;
-    private static final float LEARNING_RATE = 0.001f;
+    private static final int TRAINING_PASSES = 2;
+    private static final float LEARNING_RATE = 0.01f;
     private final int inputDim;
     private final int outputDim;
     private final NDManager manager;
@@ -66,9 +59,8 @@ public class MLP implements AutoCloseable {
         this.outputDim = outputDim;
         this.manager = NDManager.newBaseManager("PyTorch");
         this.model = Model.newInstance("mlp", "PyTorch");
-        this.model.setBlock(createBlock(outputDim));
+        this.model.setBlock(createBlock(inputDim, outputDim));
         this.trainer = model.newTrainer(setupTrainingConfig());
-        this.trainer.setMetrics(new Metrics());
         this.trainer.initialize(new Shape(1, inputDim));
         this.inputBatch = new float[FRESH_BATCH_SIZE * inputDim];
         this.outputBatch = new float[FRESH_BATCH_SIZE * outputDim];
@@ -146,23 +138,17 @@ public class MLP implements AutoCloseable {
 
         try (NDManager batchManager = manager.newSubManager()) {
             NDArray input = batchManager.create(inputs, new Shape(trainingSize, inputDim));
-            NDArray output = batchManager.create(outputs, new Shape(trainingSize, outputDim));
-            ArrayDataset dataset =
-                    new ArrayDataset.Builder()
-                            .setData(input)
-                            .optLabels(output)
-                            .setSampling(trainingSize, false)
-                            .build();
-            try (Batch batch = trainer.iterateDataset(dataset).iterator().next()) {
-                for (int i = 0; i < TRAINING_PASSES; i++) {
-                    EasyTrain.trainBatch(trainer, batch);
-                    trainer.step();
+            NDArray labels = batchManager.create(outputs, new Shape(trainingSize, outputDim));
+            for (int i = 0; i < TRAINING_PASSES; i++) {
+                try (GradientCollector collector = trainer.newGradientCollector()) {
+                    NDArray predictions = trainer.forward(new NDList(input)).singletonOrThrow();
+                    NDArray loss = trainer.getLoss().evaluate(new NDList(labels), new NDList(predictions));
+                    collector.backward(loss);
                 }
+                trainer.step();
             }
             appendFreshBatchToReplayBuffer();
             batchSize = 0;
-        } catch (IOException | TranslateException e) {
-            throw new IllegalStateException("failed to train MLP batch", e);
         }
     }
 
@@ -205,10 +191,10 @@ public class MLP implements AutoCloseable {
         }
     }
 
-    private static SequentialBlock createBlock(int outputDim) {
+    private static SequentialBlock createBlock(int inputDim, int outputDim) {
         return new SequentialBlock()
-                .add(Linear.builder().setUnits(128).build())
-                .add(Activation.sigmoidBlock())
+                .add(Linear.builder().setUnits(inputDim + outputDim).build())
+                .add(Activation.tanhBlock())
                 .add(Linear.builder().setUnits(outputDim).build());
     }
 
@@ -216,10 +202,11 @@ public class MLP implements AutoCloseable {
         Adam optimizer =
                 Adam.builder()
                         .optLearningRateTracker(Tracker.fixed(LEARNING_RATE))
+                        .optWeightDecays(0.01f)
+                        .optClipGrad(1.0f)
                         .build();
         return new DefaultTrainingConfig(Loss.l2Loss())
-                .optOptimizer(optimizer)
-                .addTrainingListeners(TrainingListener.Defaults.logging());
+                .optOptimizer(optimizer);
     }
 
     private void validateInput(double[] inputs) {

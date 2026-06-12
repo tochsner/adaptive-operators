@@ -3,62 +3,37 @@ package mcmc;
 import beast.base.inference.MCMC;
 import beast.base.inference.Operator;
 import beast.base.util.Randomizer;
+import mala.FisherMALAOperator;
 import mala.MALAOperator;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.function.Function;
 
 public class MalaMCMC extends MCMC {
 
+    private Map<Operator, Function<Double, Void>> recordCallbacks = new HashMap<>();
+
+    @Override
+    public void initAndValidate() {
+        super.initAndValidate();
+
+        for (Operator operator : this.operatorSchedule.operators) {
+            if (operator instanceof MALAOperator malaOperator) {
+                this.recordCallbacks.putIfAbsent(operator, malaOperator.getRecordCallback());
+            } else if (operator instanceof FisherMALAOperator fisherMALAOperator) {
+                this.recordCallbacks.putIfAbsent(operator, fisherMALAOperator.getRecordCallback());
+            }
+        }
+    }
+
     protected Operator propagateState(final long sampleNr) {
-        state.store(sampleNr);
-
-        final Operator operator = operatorSchedule.selectOperator();
-        final double logHastingsRatio;
-        if (operator instanceof MALAOperator malaOperator) {
-            logHastingsRatio = malaOperator.proposal(oldLogLikelihood);
-        } else {
-            logHastingsRatio = operator.proposal();
-        }
-
-        if (logHastingsRatio != Double.NEGATIVE_INFINITY) {
-
-            if (operator.requiresStateInitialisation()) {
-                state.storeCalculationNodes();
-                state.checkCalculationNodesDirtiness();
-            }
-
-            newLogLikelihood = posterior.calculateLogP();
-            logAlpha = newLogLikelihood - oldLogLikelihood + logHastingsRatio; //CHECK HASTINGS
-
-            if (logAlpha >= 0 || (logAlpha != Double.NEGATIVE_INFINITY && Randomizer.nextDouble() < Math.exp(logAlpha))) {
-                // accept
-                oldLogLikelihood = newLogLikelihood;
-                state.acceptCalculationNodes();
-
-                if (sampleNr >= 0) {
-                    operator.accept();
-                }
-            } else {
-                // reject
-                if (sampleNr >= 0) {
-                    operator.reject(newLogLikelihood == Double.NEGATIVE_INFINITY ? -1 : 0);
-                }
-                state.restore();
-                state.restoreCalculationNodes();
-            }
-            state.setEverythingDirty(false);
-        } else {
-            logAlpha = Double.NEGATIVE_INFINITY;
-            // operation failed
-            if (sampleNr >= 0) {
-                operator.reject(-2);
-            }
-            state.restore();
-            if (!operator.requiresStateInitialisation()) {
-                state.setEverythingDirty(false);
-                state.restoreCalculationNodes();
+        if (Randomizer.nextDouble() < 0.05) {
+            for (Function<Double, Void> recordCallback : this.recordCallbacks.values()) {
+                recordCallback.apply(oldLogLikelihood);
             }
         }
-        log(sampleNr);
-        return operator;
+        return super.propagateState(sampleNr);
     }
 
 }

@@ -18,9 +18,8 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Locale;
+import java.util.*;
+import java.util.function.Function;
 
 public class MALAOperator extends AdaptiveOperator {
 
@@ -38,14 +37,16 @@ public class MALAOperator extends AdaptiveOperator {
 
     private List<Operator> alternativeOperators;
 
-    private double alpha = 1.0;
+    private double alpha = 0.1;
     private CenteredMultivariateNormalSampler covarianceSampler;
     private MLP mlp;
 
-    private int BURN_IN = 10_000;
-    private int JUST_TRAINING = 20_000;
+    private int BURN_IN = 5_000;
+    private int JUST_TRAINING = 10_000;
     private double offset = 0.0;
     private int count = 0;
+
+    private Function<Double, Void> recordCallback = this::record;
 
     @Override
     public void initAndValidate() {
@@ -70,42 +71,19 @@ public class MALAOperator extends AdaptiveOperator {
 
     @Override
     public double proposal() {
-        throw new UnsupportedOperationException();
-    }
-
-    public double proposal(double oldLogLikelihood) {
-        this.count++;
-
-        if (this.count < this.BURN_IN) {
+        if (this.count < this.JUST_TRAINING) {
             return this.proposeAlternativeOperator();
-        } else if (this.count == this.BURN_IN) {
-            this.offset = oldLogLikelihood;
-            System.out.println("Start to train approximate MALA with offset " + oldLogLikelihood);
         }
 
         this.refreshAdapters();
 
         // choose node to operate on for local adapters
 
-        int nodeId = Randomizer.nextInt(this.tree.getNodeCount());
-        while (this.tree.getNode(nodeId).isLeaf() || this.tree.getNode(nodeId).isRoot()) {
-            nodeId = Randomizer.nextInt(this.tree.getNodeCount());
-        }
+        int nodeId = getNodeId();
 
         // get current state
 
         double[] oldState = this.getState(nodeId);
-
-        // record state
-
-        this.record(oldState, oldLogLikelihood, nodeId);
-
-        if (this.count < this.JUST_TRAINING) {
-            return this.proposeAlternativeOperator();
-        } else if (this.count == this.JUST_TRAINING) {
-            this.offset = oldLogLikelihood;
-            System.out.println("Start approximate MALA");
-        }
 
         // do forward pass
 
@@ -134,6 +112,11 @@ public class MALAOperator extends AdaptiveOperator {
                 transitionCorrection += adapter.update(proposedMutable, nodeId);
             } catch (Exception e) {
                 System.out.println(e);
+                System.out.println(Arrays.toString(oldState));
+                System.out.println(Arrays.toString(oldGradient));
+                System.out.println(Arrays.toString(forwardMean));
+                System.out.println(Arrays.toString(proposedState));
+                System.out.println(alpha);
                 return Double.NEGATIVE_INFINITY;
             }
 
@@ -144,12 +127,19 @@ public class MALAOperator extends AdaptiveOperator {
 
         // do backward pass
 
-        double[] newState = this.getState(nodeId);
-        double[] newGradient = this.mlp.getGradient(newState);
-        double[] backwardMean = this.proposeMean(newState, newGradient);
+        double[] newGradient = this.mlp.getGradient(proposedState);
+        double[] backwardMean = this.proposeMean(proposedState, newGradient);
         double backwardLogDensity = this.logDensity(oldState, backwardMean);
 
         return backwardLogDensity - forwardLogDensity + oldLogJacobian - newLogJacobian + transitionCorrection;
+    }
+
+    private int getNodeId() {
+        int nodeId = Randomizer.nextInt(this.tree.getNodeCount());
+        while (this.tree.getNode(nodeId).isLeaf() || this.tree.getNode(nodeId).isRoot()) {
+            nodeId = Randomizer.nextInt(this.tree.getNodeCount());
+        }
+        return nodeId;
     }
 
     private void appendResult(double prediction, double logLikelihood) {
@@ -184,16 +174,26 @@ public class MALAOperator extends AdaptiveOperator {
         return state;
     }
 
-    private void record(double[] state, double logLikelihood, int nodeId) {
-        double logJacobian = 0.0;
+    public Function<Double, Void> getRecordCallback() {
+        return this.recordCallback;
+    }
 
-        for (Adapter adapter : this.adapters) {
-            if (adapter.getNumMutable() == 0) continue;
-            logJacobian += adapter.getLogJacobianCorrection(nodeId);
-        }
+    private Void record(double logLikelihood) {
+        int nodeId = this.getNodeId();
+        this.refreshAdapters();
+        double[] state = this.getState(nodeId);
+        this.record(state, logLikelihood);
+        return null;
+    }
+
+    private void record(double[] state, double logLikelihood) {
+        if (this.count++ < this.BURN_IN) return;
+        if (this.count == this.JUST_TRAINING) System.out.println("Start to train approximate MALA.");
+
+        if (this.offset == 0.0) this.offset = logLikelihood;
 
         this.mlp.record(state, new double[] {logLikelihood - this.offset});
-        this.appendResult(this.mlp.runInference(state)[0] + this.offset, logLikelihood);
+        appendResult(this.mlp.runInference(state)[0] + this.offset, logLikelihood);
 
         double[] mutableState = new double[this.totalNumMutable];
         System.arraycopy(state, 0, mutableState, 0, mutableState.length);
@@ -244,7 +244,7 @@ public class MALAOperator extends AdaptiveOperator {
         RealVector preconditionedGradient = covariance.operate(new ArrayRealVector(mutableGradient));
 
         for (int i = 0; i < this.totalNumMutable; i++) {
-            proposalMean[i] += 0.5 * this.alpha * this.alpha * preconditionedGradient.getEntry(i);
+            proposalMean[i] += 0.5 * this.alpha * this.alpha * Math.max(100, preconditionedGradient.getEntry(i));
         }
 
         return proposalMean;
@@ -311,7 +311,10 @@ public class MALAOperator extends AdaptiveOperator {
 
         double delta = this.calcDelta(logAlpha);
         delta += Math.log(this.alpha);
-        this.alpha = Math.exp(delta);
+
+        if (Double.isFinite(Math.exp(delta))) {
+            this.alpha = Math.exp(delta);
+        }
     }
 
 }

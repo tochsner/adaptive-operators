@@ -2,9 +2,7 @@ package mcmc;
 
 import adapters.Adapter;
 import beast.base.core.Input;
-import beast.base.inference.MCMC;
 import beast.base.inference.Operator;
-import beast.base.util.Randomizer;
 import ml.MLP;
 
 import java.io.IOException;
