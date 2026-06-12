@@ -20,8 +20,8 @@ public class AdaptiveOperator extends Operator {
     private Tree tree;
     private ConditionalSampler sampler;
 
-    private final int burnIn = 2_000;
-    private final int startTraining = 50_000;
+    private final int burnIn = 1_000;
+    private final int startTraining = 5_000;
     private final int endTraining = 400_000;
     private int count = 0;
 

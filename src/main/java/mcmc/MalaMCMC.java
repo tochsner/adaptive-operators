@@ -3,7 +3,6 @@ package mcmc;
 import beast.base.inference.MCMC;
 import beast.base.inference.Operator;
 import beast.base.util.Randomizer;
-import mala.FisherMALAOperator;
 import mala.MALAOperator;
 
 import java.util.HashMap;
@@ -21,8 +20,6 @@ public class MalaMCMC extends MCMC {
         for (Operator operator : this.operatorSchedule.operators) {
             if (operator instanceof MALAOperator malaOperator) {
                 this.recordCallbacks.putIfAbsent(operator, malaOperator.getRecordCallback());
-            } else if (operator instanceof FisherMALAOperator fisherMALAOperator) {
-                this.recordCallbacks.putIfAbsent(operator, fisherMALAOperator.getRecordCallback());
             }
         }
     }

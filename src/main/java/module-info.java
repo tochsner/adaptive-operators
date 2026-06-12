@@ -24,7 +24,6 @@ import slice.StepOutShrinkSliceOperator;
 import slice.LinCombSliceOperator;
 import slice.MultivariateStepOutShrinkSliceOperator;
 import mala.MAPGuidedMALAOperator;
-import mala.FisherMALAOperator;
 import mala.MALAOperator;
 import mcmc.SliceMCMC;
 import mcmc.MLMCMC;
@@ -59,7 +58,6 @@ open module adaptiveoperators {
             StepOutShrinkSliceOperator,
             MultivariateStepOutShrinkSliceOperator,
             MAPGuidedMALAOperator,
-            FisherMALAOperator,
             CubeAdapter,
             MalaMCMC,
             SliceMCMC,
