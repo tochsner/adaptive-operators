@@ -113,7 +113,11 @@ public class TaxaDistanceAdapter implements MAPAdapter {
 
         for (Node node : mrca.path()) {
             if (node != mrca.mrca()) {
-                clockRateSum += this.clockRate.get() * this.clockRates.get(node.getNr());
+                if (this.clockRates == null) {
+                    clockRateSum += this.clockRate.get();
+                } else {
+                    clockRateSum += this.clockRate.get() * this.clockRates.get(node.getNr());
+                }
             }
         }
 

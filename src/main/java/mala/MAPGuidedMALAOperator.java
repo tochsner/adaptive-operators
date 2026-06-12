@@ -12,6 +12,14 @@ import beast.base.util.Randomizer;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * MAP-guided scalar MALA operator. On each proposal it picks one of its MAP adapters at
+ * random and proposes a new value for that adapter's single parameter: the deterministic
+ * forward step pulls the current value towards the adapter's MAP value (scaled by {@code beta}
+ * and the step size), and the noise is a scalar Gaussian whose variance is a running estimate
+ * of the parameter's variance. The proposal plugs into the shared {@link GaussianProposal}
+ * mechanics through an inner kernel.
+ */
 public class MAPGuidedMALAOperator extends AdaptiveOperator {
 
     public final Input<List<AdapterGenerator<MAPAdapter>>> adapterGeneratorsInput = new Input<>("adapterGenerator", "", new ArrayList<>());
@@ -75,7 +83,6 @@ public class MAPGuidedMALAOperator extends AdaptiveOperator {
 
         double oldValue = adapter.getMutable(0)[0];
         double mapValue = adapter.getMutableMAP()[0];
-        double oldLogJacobian = adapter.getLogJacobianCorrection(0);
 
         RunningVariance runningVariance = this.variances[adapterIdx];
         runningVariance.record(oldValue);
@@ -87,24 +94,17 @@ public class MAPGuidedMALAOperator extends AdaptiveOperator {
             return Double.NEGATIVE_INFINITY;
         }
 
-        double forwardMean = this.proposalMean(oldValue, mapValue);
-        double newValue = forwardMean + Math.sqrt(proposalVariance) * Randomizer.nextGaussian();
-        double forwardLogDensity = logGaussianDensity(newValue, forwardMean, proposalVariance);
+        GaussianProposalKernel kernel = new Kernel(mapValue, proposalVariance);
 
-        if (!Double.isFinite(newValue) || !Double.isFinite(forwardLogDensity)) {
-            return Double.NEGATIVE_INFINITY;
-        }
-
-        double transitionCorrection = adapter.update(new double[]{newValue}, 0);
-        double newLogJacobian = adapter.getLogJacobianCorrection(0);
-        double reverseMean = this.proposalMean(newValue, mapValue);
-        double reverseLogDensity = logGaussianDensity(oldValue, reverseMean, proposalVariance);
-
-        return oldLogJacobian
-                + transitionCorrection
-                + reverseLogDensity
-                - newLogJacobian
-                - forwardLogDensity;
+        return GaussianProposal.propose(
+                new double[]{oldValue},
+                kernel,
+                proposed -> {
+                    double oldLogJacobian = adapter.getLogJacobianCorrection(0);
+                    double transitionCorrection = adapter.update(new double[]{proposed[0]}, 0);
+                    double newLogJacobian = adapter.getLogJacobianCorrection(0);
+                    return oldLogJacobian - newLogJacobian + transitionCorrection;
+                }).logHastingsRatio();
     }
 
     @Override
@@ -139,13 +139,39 @@ public class MAPGuidedMALAOperator extends AdaptiveOperator {
         this.alpha = Math.exp(delta);
     }
 
-    private double proposalMean(double value, double mapValue) {
-        return value + this.alpha * this.beta * (mapValue - value);
-    }
-
     private static double logGaussianDensity(double value, double mean, double variance) {
         double diff = value - mean;
         return -0.5 * (Math.log(2.0 * Math.PI * variance) + diff * diff / variance);
+    }
+
+    /**
+     * MAP-guided scalar kernel: the drift pulls the value towards the MAP value and the noise
+     * is a scalar Gaussian with the running proposal variance.
+     */
+    private final class Kernel extends AbstractDensityKernel {
+
+        private final double mapValue;
+        private final double proposalVariance;
+
+        private Kernel(double mapValue, double proposalVariance) {
+            this.mapValue = mapValue;
+            this.proposalVariance = proposalVariance;
+        }
+
+        @Override
+        public double[] mean(double[] point) {
+            return new double[]{point[0] + alpha * beta * (this.mapValue - point[0])};
+        }
+
+        @Override
+        public double[] sampleNoise() {
+            return new double[]{Math.sqrt(this.proposalVariance) * Randomizer.nextGaussian()};
+        }
+
+        @Override
+        public double logDensity(double[] point, double[] mean) {
+            return logGaussianDensity(point[0], mean[0], this.proposalVariance);
+        }
     }
 
     private static class RunningVariance {

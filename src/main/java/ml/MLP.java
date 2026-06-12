@@ -14,14 +14,16 @@ import ai.djl.training.Trainer;
 import ai.djl.training.loss.Loss;
 import ai.djl.training.optimizer.Adam;
 import ai.djl.training.tracker.Tracker;
+import adaptiveoperators.GradientModel;
 
 import java.util.Arrays;
 import java.util.Random;
 
 /**
- * Trains an MLP in an incremental fashion.
+ * Trains an MLP in an incremental fashion and exposes the gradient of its scalar output with
+ * respect to the input, so it can serve as a {@link GradientModel} for MALA-style operators.
  */
-public class MLP implements AutoCloseable {
+public class MLP implements GradientModel, AutoCloseable {
 
     private static final int BATCH_SIZE = 32;
     private static final int FRESH_BATCH_SIZE = BATCH_SIZE / 2;
@@ -73,6 +75,7 @@ public class MLP implements AutoCloseable {
      * Buffers a single training example and triggers a training step once a full batch
      * has accumulated. Examples containing non-finite values are silently ignored.
      */
+    @Override
     public void record(double[] inputs, double[] output) {
         if (!Arrays.stream(inputs).allMatch(Double::isFinite)) return;
         if (!Arrays.stream(output).allMatch(Double::isFinite)) return;
@@ -108,6 +111,7 @@ public class MLP implements AutoCloseable {
      * Computes the gradient of the scalar network output with respect to the input.
      * Only supported when {@code outputDim == 1}.
      */
+    @Override
     public double[] getGradient(double[] inputs) {
         ensureOpen();
         validateInput(inputs);

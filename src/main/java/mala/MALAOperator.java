@@ -4,6 +4,9 @@ import adapters.Adapter;
 import adapters.AdapterGenerator;
 import adaptiveoperators.AdaptiveOperator;
 import adaptiveoperators.CenteredMultivariateNormalSampler;
+import adaptiveoperators.ConditionalSamplerGradientModel;
+import adaptiveoperators.GradientModel;
+import adaptiveoperators.MultivariateNormalSampler;
 import beast.base.core.Input;
 import beast.base.evolution.tree.Tree;
 import beast.base.inference.Operator;
@@ -12,15 +15,28 @@ import beast.base.util.Randomizer;
 import ml.MLP;
 import org.apache.commons.math4.legacy.linear.ArrayRealVector;
 import org.apache.commons.math4.legacy.linear.RealMatrix;
-import org.apache.commons.math4.legacy.linear.RealVector;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.util.*;
 import java.util.function.Function;
 
+/**
+ * Adaptive, preconditioned MALA operator over the parameters attached to a tree node.
+ *
+ * <p>Each proposal takes a gradient-informed forward step and adds correlated Gaussian noise,
+ * plugging into the shared {@link GaussianProposal} mechanics through an inner kernel. The
+ * gradient of the (approximate) log target comes from a pluggable {@link GradientModel} —
+ * either a neural network ({@code ml.MLP}) or a fitted multivariate normal wrapped by
+ * {@link ConditionalSamplerGradientModel}, selected via {@code gradientModel}. The
+ * preconditioner and the proposal noise come from a {@link CenteredMultivariateNormalSampler}
+ * fitted to the visited mutable states.
+ *
+ * <p>The operator first runs a training phase (delegating proposals to the configured
+ * alternative operators) so the gradient model and covariance can be learned from recorded
+ * samples, then switches to its own gradient-based proposals.
+ */
 public class MALAOperator extends AdaptiveOperator {
 
     public final Input<List<AdapterGenerator<?>>> adapterGeneratorsInput = new Input<>("adapterGenerator", "", new ArrayList<>());
@@ -28,23 +44,27 @@ public class MALAOperator extends AdaptiveOperator {
             "alternativeOperator",
             "",
             new ArrayList<>());
+    public final Input<String> gradientModelInput = new Input<>(
+            "gradientModel",
+            "source of the approximate gradient: 'mlp' (neural network) or 'gaussian' (fitted multivariate normal)",
+            "mlp");
 
     private Tree tree;
 
-    private List<Adapter> adapters;
-    private int totalNumMutable;
-    private int totalNumImmutable;
+    protected List<Adapter> adapters;
+    protected int totalNumMutable;
+    protected int totalNumImmutable;
 
-    private List<Operator> alternativeOperators;
+    protected List<Operator> alternativeOperators;
 
     private double alpha = 0.1;
     private CenteredMultivariateNormalSampler covarianceSampler;
-    private MLP mlp;
+    protected GradientModel gradientModel;
 
-    private int BURN_IN = 5_000;
-    private int JUST_TRAINING = 10_000;
+    protected int BURN_IN = 5_000;
+    protected int JUST_TRAINING = 10_000;
     private double offset = 0.0;
-    private int count = 0;
+    protected int count = 0;
 
     private Function<Double, Void> recordCallback = this::record;
 
@@ -64,9 +84,23 @@ public class MALAOperator extends AdaptiveOperator {
         }
 
         this.covarianceSampler = new CenteredMultivariateNormalSampler(this.totalNumMutable);
-        this.mlp = new MLP(this.totalNumMutable + this.totalNumImmutable, 1);
+        this.gradientModel = this.createGradientModel(this.totalNumMutable + this.totalNumImmutable);
 
         this.removeResults();
+    }
+
+    private GradientModel createGradientModel(int inputDimension) {
+        String choice = this.gradientModelInput.get();
+
+        if ("mlp".equalsIgnoreCase(choice)) {
+            return new MLP(inputDimension, 1);
+        }
+
+        if ("gaussian".equalsIgnoreCase(choice)) {
+            return new ConditionalSamplerGradientModel(new MultivariateNormalSampler(0, inputDimension));
+        }
+
+        throw new IllegalArgumentException("gradientModel must be 'mlp' or 'gaussian', got: " + choice);
     }
 
     @Override
@@ -77,24 +111,25 @@ public class MALAOperator extends AdaptiveOperator {
 
         this.refreshAdapters();
 
-        // choose node to operate on for local adapters
-
-        int nodeId = getNodeId();
-
-        // get current state
+        int nodeId = this.getNodeId();
 
         double[] oldState = this.getState(nodeId);
+        double[] oldMutable = Arrays.copyOf(oldState, this.totalNumMutable);
+        double[] immutable = Arrays.copyOfRange(oldState, this.totalNumMutable, oldState.length);
 
-        // do forward pass
+        GaussianProposalKernel kernel = new Kernel(immutable);
 
-        double[] oldGradient = this.mlp.getGradient(oldState);
-        double[] forwardMean = this.proposeMean(oldState, oldGradient);
+        return GaussianProposal.propose(
+                oldMutable,
+                kernel,
+                proposed -> this.applyAdapters(proposed, nodeId)).logHastingsRatio();
+    }
 
-        // update adapters and compute Jacobian correction
-
-        double[] proposedState = this.sampleMutable(forwardMean);
-        double forwardLogDensity = this.logDensity(proposedState, forwardMean);
-
+    /**
+     * Applies the proposed mutable values through the adapters, accumulating the Jacobian and
+     * transition corrections.
+     */
+    protected double applyAdapters(double[] proposedMutable, int nodeId) {
         double oldLogJacobian = 0.0;
         double newLogJacobian = 0.0;
         double transitionCorrection = 0.0;
@@ -105,18 +140,12 @@ public class MALAOperator extends AdaptiveOperator {
 
             oldLogJacobian += adapter.getLogJacobianCorrection(nodeId);
 
-            double[] proposedMutable = new double[adapter.getNumMutable()];
-            System.arraycopy(proposedState, idx, proposedMutable, 0, adapter.getNumMutable());
+            double[] proposedSlice = new double[adapter.getNumMutable()];
+            System.arraycopy(proposedMutable, idx, proposedSlice, 0, adapter.getNumMutable());
 
             try {
-                transitionCorrection += adapter.update(proposedMutable, nodeId);
+                transitionCorrection += adapter.update(proposedSlice, nodeId);
             } catch (Exception e) {
-                System.out.println(e);
-                System.out.println(Arrays.toString(oldState));
-                System.out.println(Arrays.toString(oldGradient));
-                System.out.println(Arrays.toString(forwardMean));
-                System.out.println(Arrays.toString(proposedState));
-                System.out.println(alpha);
                 return Double.NEGATIVE_INFINITY;
             }
 
@@ -125,34 +154,15 @@ public class MALAOperator extends AdaptiveOperator {
             idx += adapter.getNumMutable();
         }
 
-        // do backward pass
-
-        double[] newGradient = this.mlp.getGradient(proposedState);
-        double[] backwardMean = this.proposeMean(proposedState, newGradient);
-        double backwardLogDensity = this.logDensity(oldState, backwardMean);
-
-        return backwardLogDensity - forwardLogDensity + oldLogJacobian - newLogJacobian + transitionCorrection;
+        return oldLogJacobian - newLogJacobian + transitionCorrection;
     }
 
-    private int getNodeId() {
+    protected int getNodeId() {
         int nodeId = Randomizer.nextInt(this.tree.getNodeCount());
         while (this.tree.getNode(nodeId).isLeaf() || this.tree.getNode(nodeId).isRoot()) {
             nodeId = Randomizer.nextInt(this.tree.getNodeCount());
         }
         return nodeId;
-    }
-
-    private void appendResult(double prediction, double logLikelihood) {
-        String line = String.format(Locale.ROOT, "%f,%f%n", prediction, logLikelihood);
-        try {
-            Files.writeString(
-                    Path.of("results.csv"),
-                    line,
-                    StandardOpenOption.CREATE,
-                    StandardOpenOption.APPEND);
-        } catch (IOException e) {
-            throw new IllegalStateException("failed to append MLP result", e);
-        }
     }
 
     private void removeResults() {
@@ -163,15 +173,10 @@ public class MALAOperator extends AdaptiveOperator {
         }
     }
 
-    private double[] getState(int nodeId) {
+    protected double[] getState(int nodeId) {
         double[] oldMutable = this.getMutable(nodeId);
         double[] oldImmutable = this.getImmutable(nodeId);
-
-        double[] state = new double[oldMutable.length + oldImmutable.length];
-        System.arraycopy(oldMutable, 0, state, 0, oldMutable.length);
-        System.arraycopy(oldImmutable, 0, state, oldMutable.length, oldImmutable.length);
-
-        return state;
+        return assemble(oldMutable, oldImmutable);
     }
 
     public Function<Double, Void> getRecordCallback() {
@@ -192,15 +197,14 @@ public class MALAOperator extends AdaptiveOperator {
 
         if (this.offset == 0.0) this.offset = logLikelihood;
 
-        this.mlp.record(state, new double[] {logLikelihood - this.offset});
-        appendResult(this.mlp.runInference(state)[0] + this.offset, logLikelihood);
+        this.gradientModel.record(state, new double[] {logLikelihood - this.offset});
 
         double[] mutableState = new double[this.totalNumMutable];
         System.arraycopy(state, 0, mutableState, 0, mutableState.length);
         this.covarianceSampler.record(new double[] {}, mutableState);
     }
 
-    private void refreshAdapters() {
+    protected void refreshAdapters() {
         for (Adapter adapter : this.adapters) {
             adapter.refresh();
         }
@@ -232,49 +236,23 @@ public class MALAOperator extends AdaptiveOperator {
         return immutable;
     }
 
-    private double[] proposeMean(double[] oldState, double[] oldGradient) {
-        double[] proposalMean = new double[oldState.length];
-
-        System.arraycopy(oldState, 0, proposalMean, 0, oldState.length);
-
-        double[] mutableGradient = new double[this.totalNumMutable];
-        System.arraycopy(oldGradient, 0, mutableGradient, 0, mutableGradient.length);
-
-        RealMatrix covariance = this.covarianceSampler.getCovariance();
-        RealVector preconditionedGradient = covariance.operate(new ArrayRealVector(mutableGradient));
-
-        for (int i = 0; i < this.totalNumMutable; i++) {
-            proposalMean[i] += 0.5 * this.alpha * this.alpha * Math.max(100, preconditionedGradient.getEntry(i));
-        }
-
-        return proposalMean;
+    /**
+     * Assembles a full network input [mutable, immutable] from a mutable vector and the
+     * immutable context captured for the current proposal.
+     */
+    protected static double[] assemble(double[] mutable, double[] immutable) {
+        double[] full = new double[mutable.length + immutable.length];
+        System.arraycopy(mutable, 0, full, 0, mutable.length);
+        System.arraycopy(immutable, 0, full, mutable.length, immutable.length);
+        return full;
     }
 
-    private double[] sampleMutable(double[] state) {
-        double[] noise = this.covarianceSampler.sampleConditionally(new double[] {}, this.alpha);
-
-        double[] perturbedState = new double[state.length];
-        for (int i = 0; i < state.length; i++) {
-            if (i < noise.length) {
-                perturbedState[i] = state[i] + noise[i];
-            } else {
-                perturbedState[i] = state[i];
-            }
+    protected static boolean allFinite(double[] values) {
+        for (double value : values) {
+            if (!Double.isFinite(value)) return false;
         }
-
-        return perturbedState;
+        return true;
     }
-
-    private double logDensity(double[] state, double[] mean) {
-        double[] deviationFromMean = new double[this.totalNumMutable];
-
-        for (int i = 0; i < this.totalNumMutable; i++) {
-            deviationFromMean[i] = state[i] - mean[i];
-        }
-
-        return this.covarianceSampler.logDensity(new double[] {}, deviationFromMean, this.alpha);
-    }
-
 
     @Override
     public List<StateNode> listStateNodes() {
@@ -301,7 +279,7 @@ public class MALAOperator extends AdaptiveOperator {
         this.alpha = value;
     }
 
-    private double proposeAlternativeOperator() {
+    protected double proposeAlternativeOperator() {
         return this.alternativeOperators.get(Randomizer.nextInt(this.alternativeOperators.size())).proposal();
     }
 
@@ -314,6 +292,51 @@ public class MALAOperator extends AdaptiveOperator {
 
         if (Double.isFinite(Math.exp(delta))) {
             this.alpha = Math.exp(delta);
+        }
+    }
+
+    /**
+     * Preconditioned MALA kernel: the drift is half the squared step times the learned
+     * covariance applied to the gradient-model gradient, and the noise is drawn from that
+     * same covariance.
+     */
+    private final class Kernel extends AbstractDensityKernel {
+
+        private final double[] immutable;
+        private final RealMatrix covariance;
+
+        private Kernel(double[] immutable) {
+            this.immutable = immutable;
+            this.covariance = covarianceSampler.getCovariance();
+        }
+
+        @Override
+        public double[] mean(double[] point) {
+            double[] gradient = gradientModel.getGradient(assemble(point, this.immutable));
+            double[] mutableGradient = Arrays.copyOf(gradient, totalNumMutable);
+            double[] preconditioned = this.covariance.operate(new ArrayRealVector(mutableGradient)).toArray();
+
+            double[] mean = new double[point.length];
+            for (int i = 0; i < point.length; i++) {
+                mean[i] = point[i] + 0.5 * alpha * alpha * Math.max(100, preconditioned[i]);
+            }
+
+            return mean;
+        }
+
+        @Override
+        public double[] sampleNoise() {
+            return covarianceSampler.sampleConditionally(new double[] {}, alpha);
+        }
+
+        @Override
+        public double logDensity(double[] point, double[] mean) {
+            double[] deviation = new double[point.length];
+            for (int i = 0; i < point.length; i++) {
+                deviation[i] = point[i] - mean[i];
+            }
+
+            return covarianceSampler.logDensity(new double[] {}, deviation, alpha);
         }
     }
 

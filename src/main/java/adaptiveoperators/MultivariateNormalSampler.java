@@ -81,9 +81,10 @@ public class MultivariateNormalSampler extends ConditionalSampler {
         this.conditionsBatch.clear();
         this.valuesBatch.clear();
 
-        // update the solver
+        // update the solver (only needed when conditioning on some variables)
 
         int nc = this.numConditions;
+        if (nc == 0) return;
 
         double[][] s11 = new double[nc][nc];
         for (int i = 0; i < nc; i++)
@@ -128,6 +129,32 @@ public class MultivariateNormalSampler extends ConditionalSampler {
         }
 
         return -0.5 * (this.numValues * Math.log(2.0 * Math.PI) + logDeterminant + quadratic);
+    }
+
+    @Override
+    public double[] getGradient(double[] inputs) {
+        int n = this.numConditions + this.numValues;
+
+        if (inputs.length != n) {
+            throw new IllegalArgumentException("inputs must have length " + n + ", got " + inputs.length);
+        }
+
+        // not enough data to estimate a covariance yet -> zero gradient
+        if (this.count < 2) return new double[n];
+
+        double[][] covariance = new double[n][n];
+        for (int i = 0; i < n; i++) {
+            for (int j = 0; j < n; j++) {
+                covariance[i][j] = this.covarianceSum[i][j] / this.count;
+            }
+        }
+
+        RealMatrix sigma = new Array2DRowRealMatrix(covariance);
+        DecompositionSolver solver = new SingularValueDecomposition(sigma).getSolver();
+
+        // gradient of log N(x; mean, sigma) is -sigma^{-1} (x - mean)
+        RealVector diff = new ArrayRealVector(inputs).subtract(new ArrayRealVector(this.mean));
+        return solver.solve(diff).mapMultiply(-1.0).toArray();
     }
 
     private ConditionalDistribution conditionalDistribution(double[] conditions) {

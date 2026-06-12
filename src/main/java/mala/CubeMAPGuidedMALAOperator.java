@@ -9,6 +9,14 @@ import org.apache.commons.math4.legacy.core.Pair;
 
 import java.util.*;
 
+/**
+ * MAP-guided MALA operator for a {@link adapters.CubeAdapter}'s vector of coordinates. Like
+ * {@link MAPGuidedMALAOperator} the deterministic forward step pulls each coordinate towards
+ * its MAP value, but here all coordinates are proposed together with independent Gaussian
+ * noise whose per-coordinate variance is a running estimate kept per cube edge (a diagonal
+ * Gaussian proposal). The proposal plugs into the shared {@link GaussianProposal} mechanics
+ * through an inner kernel.
+ */
 public class CubeMAPGuidedMALAOperator extends AdaptiveOperator {
 
     public final Input<CubeAdapter> cubeAdapterInput = new Input<>("cube", "");
@@ -34,24 +42,19 @@ public class CubeMAPGuidedMALAOperator extends AdaptiveOperator {
         double[] oldCube = this.cubeAdapter.getMutable(0);
         double[] mapCube = this.cubeAdapter.getMutableMAP();
 
-        double oldLogJacobian = this.cubeAdapter.getLogJacobianCorrection(0);
-
         double[] variance = recordAndGetVariance(oldCube);
 
-        double[] forwardMean = this.proposalMean(oldCube, mapCube);
-        double[] newCube = this.sampleCube(forwardMean, variance);
-        double forwardLogDensity = this.getLogDensity(newCube, forwardMean, variance);
+        GaussianProposalKernel kernel = new Kernel(mapCube, variance);
 
-        this.cubeAdapter.update(newCube, 0);
-
-        double newLogJacobian = this.cubeAdapter.getLogJacobianCorrection(0);
-        double[] reverseMean = this.proposalMean(newCube, mapCube);
-        double reverseLogDensity = this.getLogDensity(oldCube, reverseMean, variance);
-
-        return oldLogJacobian
-                + reverseLogDensity
-                - newLogJacobian
-                - forwardLogDensity;
+        return GaussianProposal.propose(
+                oldCube,
+                kernel,
+                proposed -> {
+                    double oldLogJacobian = this.cubeAdapter.getLogJacobianCorrection(0);
+                    this.cubeAdapter.update(proposed, 0);
+                    double newLogJacobian = this.cubeAdapter.getLogJacobianCorrection(0);
+                    return oldLogJacobian - newLogJacobian;
+                }).logHastingsRatio();
     }
 
     private double[] recordAndGetVariance(double[] cube) {
@@ -73,38 +76,47 @@ public class CubeMAPGuidedMALAOperator extends AdaptiveOperator {
         return variance;
     }
 
-    private double[] proposalMean(double[] cube, double[] mapCube) {
-        int n = this.cubeAdapter.getNumMutable();
-        double[] proposalMean = new double[n];
+    /**
+     * MAP-guided diagonal kernel: the drift pulls each cube coordinate towards its MAP value
+     * and the noise is an independent Gaussian per coordinate with the running variance.
+     */
+    private final class Kernel extends AbstractDensityKernel {
 
-        for (int i = 0; i < n; i++) {
-            proposalMean[i] = cube[i] + 0.5 * this.alpha * this.beta * (mapCube[i] - cube[i]);
+        private final double[] mapCube;
+        private final double[] variance;
+
+        private Kernel(double[] mapCube, double[] variance) {
+            this.mapCube = mapCube;
+            this.variance = variance;
         }
 
-        return proposalMean;
-    }
-
-    private double getLogDensity(double[] newCube, double[] forwardMean, double[] variance) {
-        int n = this.cubeAdapter.getNumMutable();
-        double logDensity = 0.0;
-
-        for (int i = 0; i < n; i++) {
-            double diff = newCube[i] - forwardMean[i];
-            logDensity += -0.5 * (Math.log(2.0 * Math.PI * variance[i]) + diff * diff / variance[i]);
+        @Override
+        public double[] mean(double[] point) {
+            double[] mean = new double[point.length];
+            for (int i = 0; i < point.length; i++) {
+                mean[i] = point[i] + 0.5 * alpha * beta * (this.mapCube[i] - point[i]);
+            }
+            return mean;
         }
 
-        return logDensity;
-    }
-
-    private double[] sampleCube(double[] forwardMean, double[] variance) {
-        int n = this.cubeAdapter.getNumMutable();
-        double[] sample = new double[n];
-
-        for (int i = 0; i < n; i++) {
-            sample[i] = forwardMean[i] + Math.sqrt(variance[i]) * Randomizer.nextGaussian();
+        @Override
+        public double[] sampleNoise() {
+            double[] noise = new double[this.variance.length];
+            for (int i = 0; i < noise.length; i++) {
+                noise[i] = Math.sqrt(this.variance[i]) * Randomizer.nextGaussian();
+            }
+            return noise;
         }
 
-        return sample;
+        @Override
+        public double logDensity(double[] point, double[] mean) {
+            double logDensity = 0.0;
+            for (int i = 0; i < point.length; i++) {
+                double diff = point[i] - mean[i];
+                logDensity += -0.5 * (Math.log(2.0 * Math.PI * this.variance[i]) + diff * diff / this.variance[i]);
+            }
+            return logDensity;
+        }
     }
 
     @Override
