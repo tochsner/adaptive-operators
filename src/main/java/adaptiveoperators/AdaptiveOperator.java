@@ -8,6 +8,7 @@ import beast.base.inference.StateNode;
 import beast.base.util.Randomizer;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 public class AdaptiveOperator extends Operator {
@@ -39,7 +40,7 @@ public class AdaptiveOperator extends Operator {
             totalNumImmutable += adapter.getNumImmutable();
         }
 
-        this.sampler = new MultivariateNormalSampler(totalNumImmutable, totalNumMutable);
+        this.sampler = new NeuralGaussianMixtureSampler(totalNumImmutable, totalNumMutable);
     }
 
     @Override
@@ -104,6 +105,11 @@ public class AdaptiveOperator extends Operator {
         // compute and return the log hastings ratio
 
         double[] newImmutable = this.getImmutable(nodeId);
+        if (!Arrays.stream(newImmutable).allMatch(Double::isFinite)) {
+            // the proposal led to an invalid state, so we reject it
+            return Double.NEGATIVE_INFINITY;
+        }
+
         logDensityOld += this.sampler.logDensity(newImmutable, oldMutable, scaleFactor);
         logDensityNew += this.sampler.logDensity(oldImmutable, proposal, scaleFactor);
 
