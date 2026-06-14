@@ -49,23 +49,19 @@ public class UnifiedLargeJumpMALAOperator extends SliceOperator {
             "jumpAdapter", "adapters whose parameters receive the large jump", new ArrayList<>());
     public final Input<List<AdapterGenerator>> jumpAdapterGeneratorsInput = new Input<>(
             "jumpAdapterGenerator", "", new ArrayList<>());
-    public final Input<List<Adapter>> optimizationAdaptersInput = new Input<>(
-            "optimizationAdapter", "adapters whose parameters are optimized and receive the noise", new ArrayList<>());
-    public final Input<List<AdapterGenerator>> optimizationAdapterGeneratorsInput = new Input<>(
-            "optimizationAdapterGenerator", "", new ArrayList<>());
     public final Input<Tree> treeInput = new Input<>("tree", "");
     public final Input<Integer> numOptimizationStepsInput = new Input<>(
             "numOptimizationSteps",
             "number of random-walk steps in the optimization phase",
-            7);
+            20);
     public final Input<Double> jumpScaleInput = new Input<>(
             "jumpScale",
             "initial standard deviation of the isotropic large jump (learned)",
-            0.1);
+            0.01);
     public final Input<Double> noiseScaleInput = new Input<>(
             "noiseScale",
             "fixed scaling applied to the learned covariance when drawing the proposal noise",
-            0.01);
+            0.001);
     public final Input<Integer> burnInInput = new Input<>(
             "burnIn",
             "number of initial proposals that record the optimization parameters and delegate to an "
@@ -145,14 +141,14 @@ public class UnifiedLargeJumpMALAOperator extends SliceOperator {
 
         // reverse: jump the jump parameters by -J and optimize again
 
-        double[] reverseJumpedState = add(jumpedState, negate(jump));
+        double[] reverseJumpedState = add(proposedState, negate(jump));
         this.applyVector(this.jumpAdapters, reverseJumpedState, nodeId);
 
         double[] reverseOptimizedState = this.optimizeState(nodeId, computeCurrentLogLikelihood);
 
         // restore the state to the proposal
 
-        this.applyVector(this.jumpAdapters, jumpedState, nodeId);
+        this.applyVector(this.jumpAdapters, proposedState, nodeId);
 
         // Hastings ratio over the optimization parameters under the learned covariance
 
@@ -168,7 +164,7 @@ public class UnifiedLargeJumpMALAOperator extends SliceOperator {
         for (int step = 0; step < this.numOptimizationSteps; step++) {
             double[] noise = this.jumpCovarianceSampler.sampleConditionally(new double[] {}, 0.1 * this.noiseScale);
             double[] candidate = add(best, noise);
-            this.applyVector(this.jumpAdapters, candidate, this.numJumpMutable);
+            this.applyVector(this.jumpAdapters, candidate, nodeId);
 
             double candidateLogLikelihood = computeCurrentLogLikelihood.get();
 
