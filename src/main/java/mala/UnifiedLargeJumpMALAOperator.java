@@ -2,6 +2,7 @@ package mala;
 
 import adapters.Adapter;
 import adapters.AdapterGenerator;
+import adapters.MAPAdapter;
 import adaptiveoperators.CenteredMultivariateNormalSampler;
 import beast.base.core.Input;
 import beast.base.evolution.tree.Tree;
@@ -23,11 +24,10 @@ import java.util.function.Supplier;
  * adapters' parameters; correlated Gaussian noise is then added to the optimization parameters.
  *
  * <p>Only the scalar jump scaling is learned (it is the coercible parameter, adapted towards the
- * target acceptance rate). The proposal noise is not separately tuned: it is drawn from a
- * {@link CenteredMultivariateNormalSampler} covariance fitted online to the visited optimization
- * parameters, and the same covariance defines the Hastings density. For the first {@code burnIn}
- * proposals the operator only records the optimization parameters and delegates to one of the
- * optimization operators, so the covariance is learned before it is used to drive a jump.
+ * target acceptance rate). The large jump can either sample an exploratory jump and redirect it
+ * to the closest supplied MAP-adapter target or fall back to the covariance fitted online to
+ * visited parameters. The proposal noise is drawn from the same learned covariance and that
+ * covariance defines the Hastings density.
  *
  * <p>Each proposal conditions on the jump {@code J} and the optimization seed {@code S}. The jump
  * parameters move deterministically ({@code +J} forward, {@code −J} on the reverse, which returns
@@ -49,11 +49,15 @@ public class UnifiedLargeJumpMALAOperator extends SliceOperator {
             "jumpAdapter", "adapters whose parameters receive the large jump", new ArrayList<>());
     public final Input<List<AdapterGenerator>> jumpAdapterGeneratorsInput = new Input<>(
             "jumpAdapterGenerator", "", new ArrayList<>());
+    public final Input<List<MAPAdapter>> mapJumpAdaptersInput = new Input<>(
+            "mapJumpAdapter", "MAP adapters used to guide mode-to-mode jump transport", new ArrayList<>());
+    public final Input<List<AdapterGenerator<MAPAdapter>>> mapJumpAdapterGeneratorsInput = new Input<>(
+            "mapJumpAdapterGenerator", "adapter generators used to create MAP-guided jump transports", new ArrayList<>());
     public final Input<Tree> treeInput = new Input<>("tree", "");
     public final Input<Integer> numOptimizationStepsInput = new Input<>(
             "numOptimizationSteps",
             "number of random-walk steps in the optimization phase",
-            20);
+            10);
     public final Input<Double> jumpScaleInput = new Input<>(
             "jumpScale",
             "initial standard deviation of the isotropic large jump (learned)",
@@ -67,19 +71,39 @@ public class UnifiedLargeJumpMALAOperator extends SliceOperator {
             "number of initial proposals that record the optimization parameters and delegate to an "
                     + "optimization operator while the covariance is learned",
             500);
+    public final Input<Double> mapJumpProbabilityInput = new Input<>(
+            "mapJumpProbability",
+            "probability of using a MAP-guided jump when MAP adapters are configured",
+            0.8);
+    public final Input<Double> transportNoiseScaleInput = new Input<>(
+            "transportNoiseScale",
+            "multiplier of noiseScale used for MAP-guided transport noise",
+            0.01);
+    public final Input<Integer> mapJumpCandidateCountInput = new Input<>(
+            "mapJumpCandidateCount",
+            "number of MAP targets sampled when selecting the closest target to an exploratory jump",
+            10);
 
     List<Adapter> jumpAdapters;
+    List<MAPAdapter> mapJumpAdapters;
     int numJumpMutable;
 
     private Tree tree;
     double jumpScale;
     double noiseScale;
+    double mapJumpProbability;
+    double transportNoiseScale;
+    int mapJumpCandidateCount;
     int numOptimizationSteps;
 
     CenteredMultivariateNormalSampler jumpCovarianceSampler;
 
     int burnIn;
     int count = 0;
+    long mapJumpProposalCount = 0;
+    long fallbackJumpProposalCount = 0;
+    double forwardDisplacementSum = 0.0;
+    double reverseErrorSum = 0.0;
 
     @Override
     public void initAndValidate() {
@@ -89,12 +113,20 @@ public class UnifiedLargeJumpMALAOperator extends SliceOperator {
         this.burnIn = this.burnInInput.get();
         this.jumpScale = this.jumpScaleInput.get();
         this.noiseScale = this.noiseScaleInput.get();
+        this.mapJumpProbability = this.mapJumpProbabilityInput.get();
+        this.transportNoiseScale = this.transportNoiseScaleInput.get();
+        this.mapJumpCandidateCount = this.mapJumpCandidateCountInput.get();
+        this.mapJumpAdapters = new ArrayList<>(this.mapJumpAdaptersInput.get());
 
         for (AdapterGenerator adapterGenerator : this.jumpAdapterGeneratorsInput.get()) {
             this.jumpAdapters.addAll(adapterGenerator.getAdapters());
         }
+        for (AdapterGenerator<MAPAdapter> adapterGenerator : this.mapJumpAdapterGeneratorsInput.get()) {
+            this.mapJumpAdapters.addAll(adapterGenerator.getAdapters());
+        }
 
         this.numJumpMutable = countMutable(this.jumpAdapters);
+        this.validateConfiguration();
         this.jumpCovarianceSampler = new CenteredMultivariateNormalSampler(this.numJumpMutable);
     }
 
@@ -121,8 +153,8 @@ public class UnifiedLargeJumpMALAOperator extends SliceOperator {
 
         // jump
 
-        double[] jump = this.jumpCovarianceSampler.sampleConditionally(new double[] {}, this.jumpScale);
-        double[] jumpedState = add(oldState, jump);
+        JumpResult jumpResult = this.sampleJump(oldState);
+        double[] jumpedState = add(oldState, jumpResult.jump);
         this.applyVector(this.jumpAdapters, jumpedState, nodeId);
 
         // optimize
@@ -141,20 +173,107 @@ public class UnifiedLargeJumpMALAOperator extends SliceOperator {
 
         // reverse: jump the jump parameters by -J and optimize again
 
-        double[] reverseJumpedState = add(proposedState, negate(jump));
+        double[] reverseJumpedState = add(proposedState, negate(jumpResult.jump));
         this.applyVector(this.jumpAdapters, reverseJumpedState, nodeId);
 
         double[] reverseOptimizedState = this.optimizeState(nodeId, computeCurrentLogLikelihood);
+        this.recordDiagnostics(jumpResult.usedMapJump, jumpedState, optimizedState, oldState, reverseOptimizedState);
 
         // restore the state to the proposal
 
         this.applyVector(this.jumpAdapters, proposedState, nodeId);
 
-        // Hastings ratio over the optimization parameters under the learned covariance
+        // hastings ratio over the optimization parameters under the learned covariance
 
         double ratio = this.logDensity(oldState, reverseOptimizedState) - this.logDensity(proposedState, optimizedState);
 
         return ratio + oldLogJacobian - newLogJacobian;
+    }
+
+    private void validateConfiguration() {
+        if (!Double.isFinite(this.jumpScale) || this.jumpScale <= 0.0) {
+            throw new IllegalArgumentException("jumpScale must be finite and positive");
+        }
+
+        if (!Double.isFinite(this.noiseScale) || this.noiseScale <= 0.0) {
+            throw new IllegalArgumentException("noiseScale must be finite and positive");
+        }
+
+        if (!Double.isFinite(this.mapJumpProbability)
+                || this.mapJumpProbability < 0.0
+                || this.mapJumpProbability > 1.0) {
+            throw new IllegalArgumentException("mapJumpProbability must be finite and in [0, 1]");
+        }
+
+        if (!Double.isFinite(this.transportNoiseScale) || this.transportNoiseScale < 0.0) {
+            throw new IllegalArgumentException("transportNoiseScale must be finite and non-negative");
+        }
+
+        if (this.mapJumpCandidateCount <= 0) {
+            throw new IllegalArgumentException("mapJumpCandidateCount must be positive");
+        }
+
+        for (MAPAdapter adapter : this.mapJumpAdapters) {
+            if (adapter.getNumMutable() != this.numJumpMutable) {
+                throw new IllegalArgumentException(
+                        "MAP jump adapter mutable dimension must match the unified jump dimension"
+                );
+            }
+        }
+    }
+
+    private JumpResult sampleJump(double[] oldState) {
+        double[] exploratoryJump = this.jumpCovarianceSampler.sampleConditionally(new double[] {}, this.jumpScale);
+        if (!this.mapJumpAdapters.isEmpty() && Randomizer.nextDouble() < this.mapJumpProbability) {
+            double[] exploratoryTarget = add(oldState, exploratoryJump);
+            double[] targetState = this.closestMapTarget(exploratoryTarget);
+
+            double[] transportNoise = this.jumpCovarianceSampler.sampleConditionally(
+                    new double[] {}, this.transportNoiseScale * this.noiseScale
+            );
+            double[] jump = add(subtract(targetState, oldState), transportNoise);
+            return new JumpResult(jump, true);
+        }
+
+        return new JumpResult(exploratoryJump, false);
+    }
+
+    private double[] closestMapTarget(double[] target) {
+        double[] closestTarget = null;
+        double closestDistance = Double.POSITIVE_INFINITY;
+
+        for (int i = 0; i < this.mapJumpCandidateCount; i++) {
+            MAPAdapter mapAdapter = this.mapJumpAdapters.get(Randomizer.nextInt(this.mapJumpAdapters.size()));
+            double[] candidate = mapAdapter.getMutableMAP();
+            if (candidate.length != target.length) {
+                throw new IllegalStateException("MAP target dimension does not match the unified jump dimension");
+            }
+
+            double candidateDistance = distance(candidate, target);
+            if (candidateDistance < closestDistance) {
+                closestTarget = candidate;
+                closestDistance = candidateDistance;
+            }
+        }
+
+        return closestTarget;
+    }
+
+    private void recordDiagnostics(
+            boolean usedMapJump,
+            double[] forwardStart,
+            double[] forwardOptimized,
+            double[] oldState,
+            double[] reverseOptimized
+    ) {
+        if (usedMapJump) {
+            this.mapJumpProposalCount++;
+        } else {
+            this.fallbackJumpProposalCount++;
+        }
+
+        this.forwardDisplacementSum += distance(forwardOptimized, forwardStart);
+        this.reverseErrorSum += distance(reverseOptimized, oldState);
     }
 
     private double[] optimizeState(int nodeId, Supplier<Double> computeCurrentLogLikelihood) {
@@ -269,12 +388,40 @@ public class UnifiedLargeJumpMALAOperator extends SliceOperator {
         return result;
     }
 
+    private static double[] subtract(double[] a, double[] b) {
+        double[] result = new double[a.length];
+        for (int i = 0; i < a.length; i++) {
+            result[i] = a[i] - b[i];
+        }
+        return result;
+    }
+
     private static double[] negate(double[] a) {
         double[] result = new double[a.length];
         for (int i = 0; i < a.length; i++) {
             result[i] = -a[i];
         }
         return result;
+    }
+
+    private static double distance(double[] a, double[] b) {
+        double squaredDistance = 0.0;
+        for (int i = 0; i < a.length; i++) {
+            double difference = a[i] - b[i];
+            squaredDistance += difference * difference;
+        }
+        return Math.sqrt(squaredDistance);
+    }
+
+    private static final class JumpResult {
+
+        private final double[] jump;
+        private final boolean usedMapJump;
+
+        private JumpResult(double[] jump, boolean usedMapJump) {
+            this.jump = jump;
+            this.usedMapJump = usedMapJump;
+        }
     }
 
     @Override
