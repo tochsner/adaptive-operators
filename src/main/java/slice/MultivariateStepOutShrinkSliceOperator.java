@@ -5,6 +5,7 @@ import adapters.AdapterGenerator;
 import adapters.CubeAdapter;
 import beast.base.core.Input;
 import beast.base.evolution.tree.Tree;
+import beast.base.inference.State;
 import beast.base.inference.StateNode;
 import beast.base.util.Randomizer;
 
@@ -48,7 +49,7 @@ public class MultivariateStepOutShrinkSliceOperator extends SliceOperator {
     }
 
     @Override
-    public double proposal(Supplier<Double> computeCurrentLogLikelihood) {
+    public double proposal(Supplier<Double> computeCurrentLogLikelihood, State state) {
         this.refreshAdapters();
 
         // choose node and direction to work on

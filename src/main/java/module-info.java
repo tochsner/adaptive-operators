@@ -26,9 +26,11 @@ import slice.MultivariateStepOutShrinkSliceOperator;
 import mala.MAPGuidedMALAOperator;
 import mala.MALAOperator;
 import mala.FisherMALAOperator;
+import mala.LargeJumpMALAOperator;
 import mcmc.SliceMCMC;
 import mcmc.MLMCMC;
 import mcmc.MalaMCMC;
+import mcmc.JumpMCMC;
 import delayedacceptance.ApproximateDelayedAcceptanceMCMC;
 import delayedacceptance.DelayedAcceptanceMCMC;
 import delayedacceptance.MLPPosteriorApproximation;
@@ -67,10 +69,12 @@ open module adaptiveoperators {
             LinCombSliceOperator,
             CubeMAPGuidedMALAOperator,
             FisherMALAOperator,
+            LargeJumpMALAOperator,
             LocalTreeAdapter,
             TreeHeightAdapter,
             MutableTreeHeightAdapter,
             NodeValueAdapter,
+            JumpMCMC,
             NodePositionAdapter,
             MLMCMC,
             ApproximateDelayedAcceptanceMCMC,

@@ -2,10 +2,9 @@ package slice;
 
 import adapters.Adapter;
 import adapters.AdapterGenerator;
-import adapters.TaxaDistanceAdapter;
-import adapters.TreeUtils;
 import beast.base.core.Input;
 import beast.base.evolution.tree.Tree;
+import beast.base.inference.State;
 import beast.base.inference.StateNode;
 import beast.base.util.Randomizer;
 
@@ -66,7 +65,7 @@ public class StepOutShrinkSliceOperator extends SliceOperator {
     }
 
     @Override
-    public double proposal(Supplier<Double> computeCurrentLogLikelihood) {
+    public double proposal(Supplier<Double> computeCurrentLogLikelihood, State state) {
         // choose mutable parameter to work on
 
         int nodeId = this.chooseNodeId();
