@@ -27,6 +27,7 @@ import mala.MAPGuidedMALAOperator;
 import mala.MALAOperator;
 import mala.FisherMALAOperator;
 import mala.LargeJumpMALAOperator;
+import mala.UnifiedLargeJumpMALAOperator;
 import mcmc.SliceMCMC;
 import mcmc.MLMCMC;
 import mcmc.MalaMCMC;
@@ -77,6 +78,7 @@ open module adaptiveoperators {
             JumpMCMC,
             NodePositionAdapter,
             MLMCMC,
+            UnifiedLargeJumpMALAOperator,
             ApproximateDelayedAcceptanceMCMC,
             DelayedAcceptanceMCMC,
             MLPPosteriorApproximation,

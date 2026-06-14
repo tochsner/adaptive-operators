@@ -5,7 +5,6 @@ import adapters.AdapterGenerator;
 import adaptiveoperators.CenteredMultivariateNormalSampler;
 import beast.base.core.Input;
 import beast.base.evolution.tree.Tree;
-import beast.base.inference.Operator;
 import beast.base.inference.State;
 import beast.base.inference.StateNode;
 import beast.base.util.Randomizer;
@@ -44,7 +43,7 @@ import java.util.function.Supplier;
  * to mutate only the selected node's optimization-adapter parameters, so a rejected step is
  * reverted by re-applying the previous mutable vector through those adapters.
  */
-public class LargeJumpMALAOperator2 extends SliceOperator {
+public class UnifiedLargeJumpMALAOperator extends SliceOperator {
 
     public final Input<List<Adapter>> jumpAdaptersInput = new Input<>(
             "jumpAdapter", "adapters whose parameters receive the large jump", new ArrayList<>());
@@ -55,48 +54,40 @@ public class LargeJumpMALAOperator2 extends SliceOperator {
     public final Input<List<AdapterGenerator>> optimizationAdapterGeneratorsInput = new Input<>(
             "optimizationAdapterGenerator", "", new ArrayList<>());
     public final Input<Tree> treeInput = new Input<>("tree", "");
-    public final Input<List<Operator>> optimizationOperatorsInput = new Input<>(
-            "optimizationOperator",
-            "operators used for the likelihood-increasing random-walk optimization",
-            new ArrayList<>());
     public final Input<Integer> numOptimizationStepsInput = new Input<>(
             "numOptimizationSteps",
             "number of random-walk steps in the optimization phase",
-            100);
+            7);
     public final Input<Double> jumpScaleInput = new Input<>(
             "jumpScale",
             "initial standard deviation of the isotropic large jump (learned)",
-            1.0);
+            0.1);
     public final Input<Double> noiseScaleInput = new Input<>(
             "noiseScale",
             "fixed scaling applied to the learned covariance when drawing the proposal noise",
-            1.0);
+            0.01);
     public final Input<Integer> burnInInput = new Input<>(
             "burnIn",
             "number of initial proposals that record the optimization parameters and delegate to an "
                     + "optimization operator while the covariance is learned",
-            2_000);
+            500);
 
-    // package-private so same-package unit tests can drive the optimization with fakes
     List<Adapter> jumpAdapters;
-    List<Adapter> optimizationAdapters;
-    List<Operator> optimizationOperators;
-    private Tree tree;
     int numJumpMutable;
-    int numOptimizationMutable;
-    int numOptimizationSteps;
-    int burnIn;
-    int count = 0;
+
+    private Tree tree;
     double jumpScale;
     double noiseScale;
+    int numOptimizationSteps;
+
     CenteredMultivariateNormalSampler jumpCovarianceSampler;
-    CenteredMultivariateNormalSampler optimizationCovarianceSampler;
+
+    int burnIn;
+    int count = 0;
 
     @Override
     public void initAndValidate() {
         this.jumpAdapters = this.jumpAdaptersInput.get();
-        this.optimizationAdapters = this.optimizationAdaptersInput.get();
-        this.optimizationOperators = this.optimizationOperatorsInput.get();
         this.tree = this.treeInput.get();
         this.numOptimizationSteps = this.numOptimizationStepsInput.get();
         this.burnIn = this.burnInInput.get();
@@ -106,42 +97,8 @@ public class LargeJumpMALAOperator2 extends SliceOperator {
         for (AdapterGenerator adapterGenerator : this.jumpAdapterGeneratorsInput.get()) {
             this.jumpAdapters.addAll(adapterGenerator.getAdapters());
         }
-        for (AdapterGenerator adapterGenerator : this.optimizationAdapterGeneratorsInput.get()) {
-            this.optimizationAdapters.addAll(adapterGenerator.getAdapters());
-        }
 
         this.numJumpMutable = countMutable(this.jumpAdapters);
-        this.numOptimizationMutable = countMutable(this.optimizationAdapters);
-
-        if (this.numJumpMutable == 0) {
-            throw new IllegalArgumentException("LargeJumpMALAOperator requires at least one mutable jump parameter");
-        }
-
-        if (this.numOptimizationMutable == 0) {
-            throw new IllegalArgumentException("LargeJumpMALAOperator requires at least one mutable optimization parameter");
-        }
-
-        if (this.optimizationOperators.isEmpty()) {
-            throw new IllegalArgumentException("LargeJumpMALAOperator requires at least one optimizationOperator");
-        }
-
-        if (this.numOptimizationSteps < 0) {
-            throw new IllegalArgumentException("numOptimizationSteps must be non-negative");
-        }
-
-        if (this.burnIn < 0) {
-            throw new IllegalArgumentException("burnIn must be non-negative");
-        }
-
-        if (!Double.isFinite(this.jumpScale) || this.jumpScale <= 0.0) {
-            throw new IllegalArgumentException("jumpScale must be finite and positive");
-        }
-
-        if (!Double.isFinite(this.noiseScale) || this.noiseScale <= 0.0) {
-            throw new IllegalArgumentException("noiseScale must be finite and positive");
-        }
-
-        this.optimizationCovarianceSampler = new CenteredMultivariateNormalSampler(this.numOptimizationMutable);
         this.jumpCovarianceSampler = new CenteredMultivariateNormalSampler(this.numJumpMutable);
     }
 
@@ -150,107 +107,76 @@ public class LargeJumpMALAOperator2 extends SliceOperator {
         int nodeId = this.chooseNodeId();
         this.refreshAdapters();
 
-        double[] oldStateOpt = this.getMutableVector(this.optimizationAdapters, this.numOptimizationMutable, nodeId);
-        this.optimizationCovarianceSampler.record(new double[] {}, oldStateOpt);
+        // record states
 
-        double[] oldStateJump = this.getMutableVector(this.jumpAdapters, this.numJumpMutable, nodeId);
-        this.jumpCovarianceSampler.record(new double[] {}, oldStateJump);
+        double[] oldState = this.getMutableVector(this.jumpAdapters, this.numJumpMutable, nodeId);
+        this.jumpCovarianceSampler.record(new double[] {}, oldState);
 
-        // burn-in: keep the chain moving with a simple optimization move while the covariance is
-        // still being learned, before driving any jump with it
-        if (this.count++ < this.burnIn) {
-            return this.optimizationOperators.get(Randomizer.nextInt(this.optimizationOperators.size())).proposal();
+        this.count++;
+        if (this.count < this.burnIn) {
+            return Double.NEGATIVE_INFINITY;
+        } else if (this.count == this.burnIn) {
+            System.out.println("Large jumps start");
         }
 
-        double oldLogJacobian = this.sumLogJacobianCorrection(this.jumpAdapters, nodeId)
-                + this.sumLogJacobianCorrection(this.optimizationAdapters, nodeId);
+        // record the old Jacobian
 
-        // draw the auxiliaries and the noise from the main stream before any reseed; these draws
-        // also materialize this thread's Randomizer instance, so the forward and reverse
-        // setSeed(seed) below both reseed the same RNG and the two walks are coupled
+        double oldLogJacobian = this.sumLogJacobianCorrection(this.jumpAdapters, nodeId);
+
+        // jump
 
         double[] jump = this.jumpCovarianceSampler.sampleConditionally(new double[] {}, this.jumpScale);
+        double[] jumpedState = add(oldState, jump);
+        this.applyVector(this.jumpAdapters, jumpedState, nodeId);
 
-        long seed = Randomizer.nextLong();
-        double[] noise = this.optimizationCovarianceSampler.sampleConditionally(new double[] {}, this.noiseScale);
-        long continuationSeed = Randomizer.nextLong();
+        // optimize
 
-        // forward: jump the jump parameters by +J, then optimize the optimization parameters
+        double[] optimizedState = this.optimizeState(nodeId, computeCurrentLogLikelihood);
 
-        double[] forwardMean = this.jumpAndOptimize(jump, oldStateOpt, seed, nodeId, computeCurrentLogLikelihood, state);
-        if (forwardMean == null) return Double.NEGATIVE_INFINITY;
+        // add noise
 
-        double[] proposedJump = add(oldStateJump, jump);
-        double[] proposedOptimization = new double[this.numOptimizationMutable];
-        for (int i = 0; i < this.numOptimizationMutable; i++) {
-            proposedOptimization[i] = forwardMean[i] + noise[i];
-            if (!Double.isFinite(proposedOptimization[i])) return Double.NEGATIVE_INFINITY;
-        }
+        double[] noise = this.jumpCovarianceSampler.sampleConditionally(new double[] {}, this.noiseScale);
+        double[] proposedState = add(optimizedState, noise);
+        this.applyVector(this.jumpAdapters, proposedState, nodeId);
 
-        // apply the proposal y and record its Jacobian and transition correction
+        // record the new Jacobian
 
-        double transitionCorrection = this.applyVector(this.jumpAdapters, proposedJump, nodeId)
-                + this.applyVector(this.optimizationAdapters, proposedOptimization, nodeId);
-        if (!Double.isFinite(transitionCorrection)) return Double.NEGATIVE_INFINITY;
-        double newLogJacobian = this.sumLogJacobianCorrection(this.jumpAdapters, nodeId)
-                + this.sumLogJacobianCorrection(this.optimizationAdapters, nodeId);
+        double newLogJacobian = this.sumLogJacobianCorrection(this.jumpAdapters, nodeId);
 
-        // reverse: jump the jump parameters by -J (back to the start) and optimize again
+        // reverse: jump the jump parameters by -J and optimize again
 
-        double[] reverseMean = this.jumpAndOptimize(negate(jump), proposedOptimization, seed, nodeId, computeCurrentLogLikelihood, state);
-        if (reverseMean == null) return Double.NEGATIVE_INFINITY;
+        double[] reverseJumpedState = add(jumpedState, negate(jump));
+        this.applyVector(this.jumpAdapters, reverseJumpedState, nodeId);
 
-        // restore the state to the proposal y, then continue the main stream from a fresh seed
+        double[] reverseOptimizedState = this.optimizeState(nodeId, computeCurrentLogLikelihood);
 
-        if (!Double.isFinite(this.applyVector(this.jumpAdapters, proposedJump, nodeId))) return Double.NEGATIVE_INFINITY;
-        if (!Double.isFinite(this.applyVector(this.optimizationAdapters, proposedOptimization, nodeId))) return Double.NEGATIVE_INFINITY;
-        Randomizer.setSeed(continuationSeed);
+        // restore the state to the proposal
+
+        this.applyVector(this.jumpAdapters, jumpedState, nodeId);
 
         // Hastings ratio over the optimization parameters under the learned covariance
 
-        double ratio = this.logDensity(oldStateOpt, reverseMean) - this.logDensity(proposedOptimization, forwardMean);
-        if (!Double.isFinite(ratio)) return Double.NEGATIVE_INFINITY;
+        double ratio = this.logDensity(oldState, reverseOptimizedState) - this.logDensity(proposedState, optimizedState);
 
-        return ratio + oldLogJacobian - newLogJacobian + transitionCorrection;
+        return ratio + oldLogJacobian - newLogJacobian;
     }
 
-    /**
-     * Runs the conditioned forward/reverse map: seed the walk with {@code seed}, apply the jump
-     * delta to the jump parameters, set the optimization parameters to {@code startOptimization},
-     * then take {@code numOptimizationSteps} random-walk steps keeping only likelihood-increasing
-     * moves. Returns the optimized optimization vector and leaves the state there, or {@code null}
-     * if the starting point cannot be evaluated. Does not restore the RNG; the caller reseeds once
-     * both walks have run.
-     */
-    double[] jumpAndOptimize(double[] jumpDelta, double[] startOptimization, long seed, int nodeId, Supplier<Double> ll, State state) {
-        Randomizer.setSeed(seed);
-
-        double[] jumpedJump = add(this.getMutableVector(this.jumpAdapters, this.numJumpMutable, nodeId), jumpDelta);
-        if (!Double.isFinite(this.applyVector(this.jumpAdapters, jumpedJump, nodeId))) return null;
-        if (!Double.isFinite(this.applyVector(this.optimizationAdapters, startOptimization, nodeId))) return null;
-
-        double[] best = startOptimization;
-        double bestLogLikelihood = ll.get();
-        if (!Double.isFinite(bestLogLikelihood)) return null;
+    private double[] optimizeState(int nodeId, Supplier<Double> computeCurrentLogLikelihood) {
+        double[] best = this.getMutableVector(this.jumpAdapters, this.numJumpMutable, nodeId);
+        double bestLogLikelihood = computeCurrentLogLikelihood.get();
 
         for (int step = 0; step < this.numOptimizationSteps; step++) {
-            Operator operator = this.optimizationOperators.get(Randomizer.nextInt(this.optimizationOperators.size()));
+            double[] noise = this.jumpCovarianceSampler.sampleConditionally(new double[] {}, 0.1 * this.noiseScale);
+            double[] candidate = add(best, noise);
+            this.applyVector(this.jumpAdapters, candidate, this.numJumpMutable);
 
-            double operatorLogHastings = operator.proposal();
-
-            double candidateLogLikelihood;
-            if (operatorLogHastings == Double.NEGATIVE_INFINITY) {
-                candidateLogLikelihood = Double.NEGATIVE_INFINITY;
-            } else {
-                candidateLogLikelihood = ll.get();
-            }
+            double candidateLogLikelihood = computeCurrentLogLikelihood.get();
 
             if (candidateLogLikelihood > bestLogLikelihood) {
-                best = this.getMutableVector(this.optimizationAdapters, this.numOptimizationMutable, nodeId);
+                best = candidate;
                 bestLogLikelihood = candidateLogLikelihood;
             } else {
-                // revert
-                this.applyVector(optimizationAdapters, best, nodeId);
+                this.applyVector(jumpAdapters, best, nodeId);
             }
         }
 
@@ -272,9 +198,6 @@ public class LargeJumpMALAOperator2 extends SliceOperator {
 
     private void refreshAdapters() {
         for (Adapter adapter : this.jumpAdapters) {
-            adapter.refresh();
-        }
-        for (Adapter adapter : this.optimizationAdapters) {
             adapter.refresh();
         }
     }
@@ -305,12 +228,7 @@ public class LargeJumpMALAOperator2 extends SliceOperator {
             if (numMutable == 0) continue;
 
             double[] slice = Arrays.copyOfRange(mutable, idx, idx + numMutable);
-
-            try {
-                transitionCorrection += adapter.update(slice, nodeId);
-            } catch (RuntimeException e) {
-                return Double.NEGATIVE_INFINITY;
-            }
+            transitionCorrection += adapter.update(slice, nodeId);
 
             idx += numMutable;
         }
@@ -336,7 +254,7 @@ public class LargeJumpMALAOperator2 extends SliceOperator {
             deviation[i] = point[i] - mean[i];
         }
 
-        return this.optimizationCovarianceSampler.logDensity(new double[] {}, deviation, this.noiseScale);
+        return this.jumpCovarianceSampler.logDensity(new double[] {}, deviation, this.noiseScale);
     }
 
     private static int countMutable(List<Adapter> adapters) {
@@ -371,41 +289,38 @@ public class LargeJumpMALAOperator2 extends SliceOperator {
             stateNodes.addAll(adapter.listStateNodes());
         }
 
-        for (Adapter adapter : this.optimizationAdapters) {
-            stateNodes.addAll(adapter.listStateNodes());
-        }
-
-        for (Operator operator : this.optimizationOperators) {
-            stateNodes.addAll(operator.listStateNodes());
-        }
-
         return stateNodes;
     }
 
     @Override
     public double getCoercableParameterValue() {
-        return this.jumpScale;
+        return this.noiseScale;
     }
 
     @Override
     public void setCoercableParameterValue(double value) {
         if (!Double.isFinite(value) || value <= 0.0) {
-            throw new IllegalArgumentException("jumpScale must be finite and positive");
+            throw new IllegalArgumentException("noiseScale must be finite and positive");
         }
 
-        this.jumpScale = value;
+        this.noiseScale = value;
     }
 
     @Override
     public void optimize(double logAlpha) {
 //        double delta = this.calcDelta(logAlpha);
-//        delta += Math.log(this.jumpScale);
-//        this.jumpScale = Math.exp(delta);
-//        if (Randomizer.nextDouble() < 0.01) System.out.println(jumpScale);
+//        delta += Math.log(this.noiseScale);
+//        this.noiseScale = Math.exp(delta);
     }
 
     @Override
     public double getTargetAcceptanceProbability() {
-        return 0.01;
+        return 0.05;
+    }
+
+    @Override
+    public String getName() {
+        String className = this.getClass().getName();
+        return className + "(js " + this.jumpScale + ", ns " + this.noiseScale + ")";
     }
 }
