@@ -13,7 +13,7 @@ import java.util.List;
 
 public class GuidedRandomWalkOperator extends Operator {
 
-    private static final double TARGET_ACCEPTANCE_PROBABILITY = 0.75;
+    private static final double TARGET_ACCEPTANCE_PROBABILITY = 0.66;
     private static final double ADAPTATION_OFFSET = 10.0;
     private static final double ADAPTATION_EXPONENT = 0.6;
     private static final double MIN_SCALE_FACTOR = 1.0E-12;
