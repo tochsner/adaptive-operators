@@ -1,8 +1,8 @@
 package transforms;
 
-import beast.base.spec.inference.parameter.RealVectorParam;
+import beast.base.inference.StateNode;
 
-public non-sealed interface RealVectorTransform<T extends RealVectorParam<?>> extends Transform<T, Double[]> {
+public non-sealed interface RealVectorTransform<T extends StateNode> extends Transform<T, Double[]> {
 
     default int getDimension() {
         return this.get().length;

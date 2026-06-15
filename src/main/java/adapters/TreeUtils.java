@@ -365,8 +365,8 @@ public class TreeUtils {
             cube.addAll(leftCube);
             cube.addAll(rightCube);
         } else {
-            cube.addAll(leftCube);
             cube.addAll(rightCube);
+            cube.addAll(leftCube);
         }
 
         return leftHasTaxa || rightHasTaxa;

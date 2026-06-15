@@ -125,6 +125,10 @@ public class CenteredMultivariateNormalSampler extends ConditionalSampler {
         return this.regularizedCovariance;
     }
 
+    public double[] getMean() {
+        return Arrays.copyOf(this.mean, this.mean.length);
+    }
+
     private CholeskyDecomposition regularizedCholesky(RealMatrix matrix) {
         RealMatrix symmetricMatrix = symmetrized(matrix);
         double jitter = initialJitter(symmetricMatrix);

@@ -19,7 +19,7 @@ public class RealScalarSigmoidTransform extends BEASTObject implements RealScala
     @Override
     public Double get() {
         double p = this.parameter.get();
-        return Math.log(p / (1.0 - p));
+        return Math.log(1e-6 + p / (1.0 - p));
     }
 
     @Override

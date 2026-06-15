@@ -20,12 +20,17 @@ import transforms.RealScalarSigmoidTransform;
 import transforms.RealScalarLogTransform;
 import transforms.RealVectorLogTransform;
 import transforms.SimplexTransform;
+import transforms.IntSimplexRoundTransform;
+import transforms.SimplexRoundTransform;
 import slice.StepOutShrinkSliceOperator;
 import slice.LinCombSliceOperator;
 import slice.MultivariateStepOutShrinkSliceOperator;
 import mala.MAPGuidedMALAOperator;
 import mala.MALAOperator;
+import adaptiveoperators.PreconditionedCrankNicolsonOperator;
+import adaptiveoperators.GuidedMixedPreconditionedCrankNicolsonOperator;
 import mala.FisherMALAOperator;
+import irreversible.GuidedRandomWalkOperator;
 import largejump.LargeJumpMALAOperator;
 import largejump.UnifiedLargeJumpMALAOperator;
 import mcmc.SliceMCMC;
@@ -58,6 +63,7 @@ open module adaptiveoperators {
             AdaptiveOperator,
             BasicAdapter,
             TaxaDistanceAdapterGenerator,
+            IntSimplexRoundTransform,
             DualAveragingOperatorSchedule,
             StepOutShrinkSliceOperator,
             MultivariateStepOutShrinkSliceOperator,
@@ -66,6 +72,7 @@ open module adaptiveoperators {
             MalaMCMC,
             SliceMCMC,
             TreeTripletAdapter,
+            GuidedRandomWalkOperator,
             MALAOperator,
             LinCombSliceOperator,
             CubeMAPGuidedMALAOperator,
@@ -89,6 +96,9 @@ open module adaptiveoperators {
             IntVectorIdentityTransform,
             RealScalarLogTransform,
             SimplexTransform,
+            PreconditionedCrankNicolsonOperator,
+            GuidedMixedPreconditionedCrankNicolsonOperator,
+            SimplexRoundTransform,
             RealVectorLogTransform,
             AdaptiveWeightOperator,
             RunningAverageScheme;

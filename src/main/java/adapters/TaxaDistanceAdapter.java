@@ -76,12 +76,21 @@ public class TaxaDistanceAdapter implements MAPAdapter {
 
     @Override
     public double update(double[] mutable, int nodeId) {
-        return -TreeUtils.deterministicallyChangeNodeDistance(
-                this.tree.getNode(this.taxa[0]),
-                this.tree.getNode(this.taxa[1]),
-                Math.exp(mutable[0]) + this.offset,
-                this.cube
-        );
+        if (this.cube == null) {
+            return -TreeUtils.changeNodeDistance(
+                    this.tree.getNode(this.taxa[0]),
+                    this.tree.getNode(this.taxa[1]),
+                    Math.exp(mutable[0]) + this.offset,
+                    this.random
+            );
+        } else {
+            return -TreeUtils.deterministicallyChangeNodeDistance(
+                    this.tree.getNode(this.taxa[0]),
+                    this.tree.getNode(this.taxa[1]),
+                    Math.exp(mutable[0]) + this.offset,
+                    this.cube
+            );
+        }
     }
 
     @Override

@@ -154,6 +154,17 @@ public class BasicAdapter extends BEASTObject implements Adapter {
             return offset;
         }
 
+        if (transform instanceof IntVectorTransform<?> vectorTransform) {
+            Integer[] values = new Integer[vectorTransform.getDimension()];
+
+            for (int i = 0; i < values.length; i++) {
+                values[i] = (int) Math.round(mutable[offset++]);
+            }
+
+            vectorTransform.set(values);
+            return offset;
+        }
+
         throw new IllegalArgumentException("Unsupported transform type: " + transform.getClass().getName());
     }
 
