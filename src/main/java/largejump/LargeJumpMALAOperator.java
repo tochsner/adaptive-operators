@@ -1,14 +1,14 @@
-package mala;
+package largejump;
 
 import adapters.Adapter;
 import adapters.AdapterGenerator;
 import adaptiveoperators.CenteredMultivariateNormalSampler;
 import beast.base.core.Input;
 import beast.base.evolution.tree.Tree;
-import beast.base.inference.Operator;
 import beast.base.inference.State;
 import beast.base.inference.StateNode;
 import beast.base.util.Randomizer;
+import mala.AbstractDensityKernel;
 import slice.SliceOperator;
 
 import java.util.ArrayList;

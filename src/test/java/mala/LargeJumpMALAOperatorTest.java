@@ -5,6 +5,7 @@ import adaptiveoperators.CenteredMultivariateNormalSampler;
 import beast.base.inference.Operator;
 import beast.base.inference.StateNode;
 import beast.base.util.Randomizer;
+import largejump.LargeJumpMALAOperator;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;

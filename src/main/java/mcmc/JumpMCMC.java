@@ -3,13 +3,14 @@ package mcmc;
 import beast.base.inference.MCMC;
 import beast.base.inference.Operator;
 import beast.base.util.Randomizer;
+import largejump.LargeJumpMALAOperator;
 import slice.SliceOperator;
 
 import java.util.function.Supplier;
 
 /**
  * MCMC driver for operators that run an inner optimization, evaluating the posterior many
- * times within a single proposal (see {@link mala.LargeJumpMALAOperator}).
+ * times within a single proposal (see {@link LargeJumpMALAOperator}).
  *
  * <p>BEAST's store/restore cache is single-buffered: it can represent the current state plus
  * exactly one stored state, and assumes a single store -> mutate -> calculate -> accept/restore
