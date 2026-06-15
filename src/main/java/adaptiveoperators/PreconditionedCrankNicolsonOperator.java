@@ -1,6 +1,7 @@
 package adaptiveoperators;
 
 import adapters.Adapter;
+import adapters.AdapterGenerator;
 import beast.base.core.Input;
 import beast.base.evolution.tree.Tree;
 import beast.base.inference.Operator;
@@ -11,36 +12,40 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-public class AdaptiveOperator extends Operator {
+public class PreconditionedCrankNicolsonOperator extends Operator {
 
     public final Input<List<Adapter>> adaptersInput = new Input<>("adapter", "", new ArrayList<>());
+    public final Input<List<AdapterGenerator>> adapterGeneratorsInput = new Input<>("adapterGenerator", "", new ArrayList<>());
+
     public final Input<Tree> treeInput = new Input<>("tree", "");
 
     private List<Adapter> adapters;
     private Tree tree;
-    private ConditionalSampler sampler;
+    private CenteredMultivariateNormalSampler sampler;
 
-    private final int burnIn = 1_000;
-    private final int startTraining = 5_000;
+    private final int burnIn = 100;
+    private final int startTraining = 1_000;
     private final int endTraining = 400_000;
     private int count = 0;
 
-    private double scaleFactor = 1.0;
+    private double scaleFactor = 0.2;
 
     @Override
     public void initAndValidate() {
         this.adapters = this.adaptersInput.get();
         this.tree = this.treeInput.get();
 
+        for (AdapterGenerator adapterGenerator : this.adapterGeneratorsInput.get()) {
+            this.adapters.addAll(adapterGenerator.getAdapters());
+        }
+
         int totalNumMutable = 0;
-        int totalNumImmutable = 0;
 
         for (Adapter adapter : this.adapters) {
             totalNumMutable += adapter.getNumMutable();
-            totalNumImmutable += adapter.getNumImmutable();
         }
 
-        this.sampler = new NeuralGaussianMixtureSampler(totalNumImmutable, totalNumMutable);
+        this.sampler = new CenteredMultivariateNormalSampler(totalNumMutable);
     }
 
     @Override
@@ -58,13 +63,13 @@ public class AdaptiveOperator extends Operator {
             nodeId = Randomizer.nextInt(this.tree.getNodeCount());
         }
 
+        this.refreshAdapters();
         double[] oldMutable = this.getMutable(nodeId);
-        double[] oldImmutable = this.getImmutable(nodeId);
 
         // record the state in the sampler
 
         if (this.count < this.endTraining) {
-            this.sampler.record(oldImmutable, oldMutable);
+            this.sampler.record(new double[] {}, oldMutable);
         }
 
         if (this.count < this.startTraining) {
@@ -72,20 +77,22 @@ public class AdaptiveOperator extends Operator {
             // we don't change the state
             return 0;
         } else if (this.count == this.startTraining) {
-            System.out.println("Start with adaptive kernel");
+            System.out.println("Start with learning pCN kernel");
         } else if (this.count == this.endTraining) {
-            System.out.println("End with adaptive kernel");
+            System.out.println("End with learning pCN kernel");
         }
 
         // sample from the conditional distribution
 
-        double[] proposal;
-        proposal = this.sampler.sampleConditionally(this.getImmutable(nodeId), scaleFactor);
+        double[] perturbation = this.sampler.sampleConditionally(new double[] {}, 1.0);
 
         // update the adapters
 
         double logDensityOld = 0.0;
         double logDensityNew = 0.0;
+        double transitionCorrection = 0.0;
+        double[] mean = this.sampler.getMean();
+        double[] proposal = new double[oldMutable.length];
 
         int idx = 0;
         for (Adapter adapter : this.adapters) {
@@ -93,27 +100,48 @@ public class AdaptiveOperator extends Operator {
 
             logDensityOld += adapter.getLogJacobianCorrection(nodeId);
 
-            double[] proposedMutable = new double[adapter.getNumMutable()];
-            System.arraycopy(proposal, idx, proposedMutable, 0, adapter.getNumMutable());
-            adapter.update(proposedMutable, nodeId);
+            double[] mutable = adapter.getMutable(nodeId);
+            for (int i = 0; i < adapter.getNumMutable(); i++) {
+                int coordinate = idx++;
+                mutable[i] = mean[coordinate]
+                        + Math.sqrt(1.0 - this.scaleFactor * this.scaleFactor) * (mutable[i] - mean[coordinate])
+                        + this.scaleFactor * perturbation[coordinate];
+                proposal[coordinate] = mutable[i];
+            }
+
+            try {
+                transitionCorrection += adapter.update(mutable, nodeId);
+            } catch (Exception e) {
+                return Double.NEGATIVE_INFINITY;
+            }
 
             logDensityNew += adapter.getLogJacobianCorrection(nodeId);
-
-            idx += adapter.getNumMutable();
         }
 
-        // compute and return the log hastings ratio
-
-        double[] newImmutable = this.getImmutable(nodeId);
-        if (!Arrays.stream(newImmutable).allMatch(Double::isFinite)) {
-            // the proposal led to an invalid state, so we reject it
+        if (!Arrays.stream(proposal).allMatch(Double::isFinite)) {
             return Double.NEGATIVE_INFINITY;
         }
 
-        logDensityOld += this.sampler.logDensity(newImmutable, oldMutable, scaleFactor);
-        logDensityNew += this.sampler.logDensity(oldImmutable, proposal, scaleFactor);
+        logDensityOld += this.sampler.logDensity(new double[] {}, centered(oldMutable, mean), 1.0);
+        logDensityNew += this.sampler.logDensity(new double[] {}, centered(proposal, mean), 1.0);
 
-        return logDensityOld - logDensityNew;
+        return logDensityOld - logDensityNew + transitionCorrection;
+    }
+
+    private static double[] centered(double[] values, double[] mean) {
+        double[] centered = new double[values.length];
+
+        for (int i = 0; i < values.length; i++) {
+            centered[i] = values[i] - mean[i];
+        }
+
+        return centered;
+    }
+
+    private void refreshAdapters() {
+        for (Adapter adapter : this.adapters) {
+            adapter.refresh();
+        }
     }
 
     private double[] getMutable(int nodeId) {
@@ -129,19 +157,6 @@ public class AdaptiveOperator extends Operator {
         return mutable;
     }
 
-    private double[] getImmutable(int nodeId) {
-        double[] immutable = new double[this.sampler.numConditions];
-
-        int idx = 0;
-        for (Adapter adapter : this.adapters) {
-            double[] adapterImmutable = adapter.getImmutable(nodeId);
-            System.arraycopy(adapterImmutable, 0, immutable, idx, adapter.getNumImmutable());
-            idx += adapter.getNumImmutable();
-        }
-
-        return immutable;
-    }
-
     @Override
     public List<StateNode> listStateNodes() {
         List<StateNode> nodes = new ArrayList<>();
@@ -152,4 +167,30 @@ public class AdaptiveOperator extends Operator {
 
         return nodes;
     }
+
+    @Override
+    public double getCoercableParameterValue() {
+        return this.scaleFactor;
+    }
+
+    @Override
+    public void setCoercableParameterValue(double value) {
+        if (!Double.isFinite(value) || value <= 0.0 || value > 1.0) {
+            throw new IllegalArgumentException("scaleFactor must be finite and in (0, 1]");
+        }
+        this.scaleFactor = value;
+    }
+
+    @Override
+    public void optimize(double logAlpha) {
+        if (this.count < this.startTraining) return;
+
+        double delta = this.calcDelta(logAlpha);
+        delta += Math.log(this.scaleFactor);
+
+        if (Double.isFinite(Math.exp(delta))) {
+            this.scaleFactor = Math.min(0.999, Math.max(0.001, Math.exp(delta)));
+        }
+    }
+
 }
