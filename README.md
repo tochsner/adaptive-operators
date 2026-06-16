@@ -19,17 +19,13 @@ Many custom operators are built around an adapter layer. Adapters expose parts o
 
 Relevant classes:
 
-- [`adapters.Adapter`](src/main/java/adapters/Adapter.java)
-- [`adapters.BasicAdapter`](src/main/java/adapters/BasicAdapter.java)
 - [`adapters.TreeHeightAdapter`](src/main/java/adapters/TreeHeightAdapter.java)
 - [`adapters.MutableTreeHeightAdapter`](src/main/java/adapters/MutableTreeHeightAdapter.java)
+- [`adapters.CubeAdapter`](src/main/java/adapters/CubeAdapter.java)
+- [`adapters.TaxaDistanceAdapterGenerator`](src/main/java/adapters/TaxaDistanceAdapterGenerator.java)
 - [`adapters.TreeTripletAdapter`](src/main/java/adapters/TreeTripletAdapter.java)
 - [`adapters.LocalTreeAdapter`](src/main/java/adapters/LocalTreeAdapter.java)
 - [`adapters.NodePositionAdapter`](src/main/java/adapters/NodePositionAdapter.java)
-- [`adapters.CubeAdapter`](src/main/java/adapters/CubeAdapter.java)
-- [`adapters.TaxaDistanceAdapterGenerator`](src/main/java/adapters/TaxaDistanceAdapterGenerator.java)
-
-The XMLs use this layer heavily through `BasicAdapter`, tree-height adapters, triplet/local-tree adapters, `CubeAdapter`, and taxa-distance adapter generators. The most common transforms are log transforms for positive parameters, simplex transforms for frequencies, sigmoid transforms for unit-interval parameters, and vector log transforms for positive vectors.
 
 Relevant transform classes:
 
@@ -41,16 +37,14 @@ Relevant transform classes:
 
 ## Learned Conditional Proposals
 
-The adaptive operator learns a conditional proposal distribution from observed mutable and immutable adapter vectors. After burn-in and training, it samples new mutable values conditional on the current immutable state and corrects with the learned forward/reverse proposal densities and adapter Jacobians.
+The adaptive operator learns a conditional proposal distribution from observed mutable and immutable adapter vectors. After burn-in and training, it samples new mutable values conditional on the current immutable state.
 
 Relevant classes:
 
 - [`adaptiveoperators.AdaptiveOperator`](src/main/java/adaptiveoperators/AdaptiveOperator.java)
 - [`adaptiveoperators.MultivariateNormalSampler`](src/main/java/adaptiveoperators/MultivariateNormalSampler.java)
-- [`adaptiveoperators.NeuralGaussianMixtureSampler`](src/main/java/adaptiveoperators/NeuralGaussianMixtureSampler.java)
 - [`adaptiveoperators.GaussianMixtureSampler`](src/main/java/adaptiveoperators/GaussianMixtureSampler.java)
-
-`MultivariateNormalSampler` is the Gaussian version of this idea: it records joint condition/value vectors with an online mean and covariance update, then samples or evaluates the conditional normal distribution. The mixture samplers provide richer conditional proposal families when a single Gaussian is too restrictive.
+- [`adaptiveoperators.NeuralGaussianMixtureSampler`](src/main/java/adaptiveoperators/NeuralGaussianMixtureSampler.java)
 
 ## Learned Tree-Distance Proposals
 
@@ -82,7 +76,7 @@ Relevant classes:
 
 ## Gradient and MALA Proposals
 
-The MALA family proposes adapter vectors using gradient-guided Gaussian transitions. `MALAOperator` learns either a neural-network or Gaussian approximation to the gradient during a training phase, then uses a learned covariance for preconditioned proposals. `FisherMALAOperator` adds Fisher-style preconditioning and adaptive step-size behavior. The MAP-guided variants use MAP/cube summaries to guide moves.
+The MALA family proposes adapter vectors using approximate-gradient-guided proposals. `MALAOperator` learns either a neural-network or Gaussian approximation to the gradient during a training phase, then uses a learned covariance for preconditioned proposals. `FisherMALAOperator` adds Fisher-style preconditioning and adaptive step-size behavior. The MAP-guided variants use MAP/cube summaries to guide moves.
 
 Relevant classes:
 
@@ -91,8 +85,6 @@ Relevant classes:
 - [`mala.MAPGuidedMALAOperator`](src/main/java/mala/MAPGuidedMALAOperator.java)
 - [`mala.CubeMAPGuidedMALAOperator`](src/main/java/mala/CubeMAPGuidedMALAOperator.java)
 - [`mcmc.MalaMCMC`](src/main/java/mcmc/MalaMCMC.java)
-
-The XMLs use this family for Gaussian-gradient MALA runs, neural MALA runs, tree MALA runs, and MAP/cube-guided configurations.
 
 ## Large-Jump and Mode-Jump Proposals
 
@@ -104,15 +96,6 @@ Relevant classes:
 - [`largejump.UnifiedLargeJumpMALAOperator`](src/main/java/largejump/UnifiedLargeJumpMALAOperator.java)
 - [`mcmc.JumpMCMC`](src/main/java/mcmc/JumpMCMC.java)
 
-## Preconditioned Crank-Nicolson Proposals
-
-The pCN operators learn a centered covariance over adapted mutable values and then propose by shrinking the current state toward the learned mean plus a covariance-scaled perturbation. The guided mixed variant combines this with guided adapter information.
-
-Relevant classes:
-
-- [`adaptiveoperators.PreconditionedCrankNicolsonOperator`](src/main/java/adaptiveoperators/PreconditionedCrankNicolsonOperator.java)
-- [`adaptiveoperators.GuidedMixedPreconditionedCrankNicolsonOperator`](src/main/java/adaptiveoperators/GuidedMixedPreconditionedCrankNicolsonOperator.java)
-
 ## Irreversible Guided Random Walks
 
 The irreversible guided random-walk operator chooses an adapted coordinate, moves in a persistent direction, and flips that direction on rejection.
@@ -120,6 +103,15 @@ The irreversible guided random-walk operator chooses an adapted coordinate, move
 Relevant class:
 
 - [`irreversible.GuidedRandomWalkOperator`](src/main/java/irreversible/GuidedRandomWalkOperator.java)
+
+## Preconditioned Crank-Nicolson Proposals
+
+The pCN operators learn a centered covariance over adapted mutable values and then propose by shrinking the current state toward the learned mean plus a covariance-scaled perturbation. The guided mixed variant combines this with guided adapter information.
+
+Relevant classes:
+
+- [`adaptiveoperators.PreconditionedCrankNicolsonOperator`](src/main/java/adaptiveoperators/PreconditionedCrankNicolsonOperator.java)
+
 
 ## Delayed-Acceptance and ML-Assisted Runs
 
