@@ -1,288 +1,141 @@
-# BEAST 3 Package Skeleton
+# Adaptive Operators
 
-A minimal, ready-to-build template for creating a BEAST 3 external package
-using the strongly-typed `spec` class hierarchy.
+This README summarizes the operator approaches implemented in this package:
 
-This skeleton demonstrates:
-- A custom scalar distribution (`MyDistribution`) extending `ScalarDistribution` — usable directly as a prior (no `Prior` wrapper)
-- A custom MCMC operator (`MyScaleOperator`) working with `RealScalarParam`
-- JPMS `module-info.java` with `provides` declarations
-- `version.xml` for package service discovery
-- JUnit 5 testing with the new strongly-typed API
-- A BEAST XML file using both custom classes with `RealScalarParam` and domain constraints
+- [Adapter-Based State Proposals](#adapter-based-state-proposals)
+- [Learned Conditional Proposals](#learned-conditional-proposals)
+- [Learned Tree-Distance Proposals](#learned-tree-distance-proposals)
+- [Slice-Based Proposals](#slice-based-proposals)
+- [Gradient and MALA Proposals](#gradient-and-mala-proposals)
+- [Large-Jump and Mode-Jump Proposals](#large-jump-and-mode-jump-proposals)
+- [Preconditioned Crank-Nicolson Proposals](#preconditioned-crank-nicolson-proposals)
+- [Irreversible Guided Random Walks](#irreversible-guided-random-walks)
+- [Delayed-Acceptance and ML-Assisted Runs](#delayed-acceptance-and-ml-assisted-runs)
+- [Adaptive Operator Weighting and Scheduling](#adaptive-operator-weighting-and-scheduling)
 
-## Prerequisites
+## Adapter-Based State Proposals
 
-- Java 25+
-- Maven 3.9+
+Many custom operators are built around an adapter layer. Adapters expose parts of the BEAST state as mutable and immutable vectors, often after a transform, so generic proposal machinery can work on scalar parameters, simplex parameters, tree heights, local tree geometry, or MAP/cube summaries.
 
-BEAST 3 artifacts are resolved from [Maven Central](https://central.sonatype.com/namespace/io.github.compevol) — no extra configuration needed.
+Relevant classes:
 
-If you want to develop against an unreleased SNAPSHOT version of BEAST 3, you can either add the GitHub Packages repository to your `pom.xml` (requires a [personal access token](https://github.com/settings/tokens) with `read:packages` scope in `~/.m2/settings.xml`), or install BEAST 3 to your local Maven repository from source:
+- [`adapters.Adapter`](src/main/java/adapters/Adapter.java)
+- [`adapters.BasicAdapter`](src/main/java/adapters/BasicAdapter.java)
+- [`adapters.TreeHeightAdapter`](src/main/java/adapters/TreeHeightAdapter.java)
+- [`adapters.MutableTreeHeightAdapter`](src/main/java/adapters/MutableTreeHeightAdapter.java)
+- [`adapters.TreeTripletAdapter`](src/main/java/adapters/TreeTripletAdapter.java)
+- [`adapters.LocalTreeAdapter`](src/main/java/adapters/LocalTreeAdapter.java)
+- [`adapters.NodePositionAdapter`](src/main/java/adapters/NodePositionAdapter.java)
+- [`adapters.CubeAdapter`](src/main/java/adapters/CubeAdapter.java)
+- [`adapters.TaxaDistanceAdapterGenerator`](src/main/java/adapters/TaxaDistanceAdapterGenerator.java)
 
-```bash
-cd /path/to/beast3
-mvn install -DskipTests
-```
+The XMLs use this layer heavily through `BasicAdapter`, tree-height adapters, triplet/local-tree adapters, `CubeAdapter`, and taxa-distance adapter generators. The most common transforms are log transforms for positive parameters, simplex transforms for frequencies, sigmoid transforms for unit-interval parameters, and vector log transforms for positive vectors.
 
-## Build and test
+Relevant transform classes:
 
-```bash
-mvn compile   # compile against beast-base
-mvn test      # run MyDistributionTest
-```
+- [`transforms.RealScalarLogTransform`](src/main/java/transforms/RealScalarLogTransform.java)
+- [`transforms.RealScalarSigmoidTransform`](src/main/java/transforms/RealScalarSigmoidTransform.java)
+- [`transforms.RealVectorLogTransform`](src/main/java/transforms/RealVectorLogTransform.java)
+- [`transforms.SimplexTransform`](src/main/java/transforms/SimplexTransform.java)
+- [`transforms.IntVectorIdentityTransform`](src/main/java/transforms/IntVectorIdentityTransform.java)
 
-## How to customise this skeleton
+## Learned Conditional Proposals
 
-1. **Rename the Maven coordinates** in `pom.xml`:
-   - Change `groupId` (should be a verified Maven Central namespace, e.g. `io.github.yourname`), `artifactId`, and `version`
-   - Update `<url>`, `<developers>`, and `<scm>` to point to your repository
+The adaptive operator learns a conditional proposal distribution from observed mutable and immutable adapter vectors. After burn-in and training, it samples new mutable values conditional on the current immutable state and corrects with the learned forward/reverse proposal densities and adapter Jacobians.
 
-2. **Rename the Java module** in `src/main/java/module-info.java`:
-   - Change `module my.beast.example` to your module name
-   - Update `exports` and `provides` declarations
+Relevant classes:
 
-3. **Rename the Java package** under `src/main/java/`:
-   - Move source files to your package directory
-   - Update `package` statements in all `.java` files
+- [`adaptiveoperators.AdaptiveOperator`](src/main/java/adaptiveoperators/AdaptiveOperator.java)
+- [`adaptiveoperators.MultivariateNormalSampler`](src/main/java/adaptiveoperators/MultivariateNormalSampler.java)
+- [`adaptiveoperators.NeuralGaussianMixtureSampler`](src/main/java/adaptiveoperators/NeuralGaussianMixtureSampler.java)
+- [`adaptiveoperators.GaussianMixtureSampler`](src/main/java/adaptiveoperators/GaussianMixtureSampler.java)
 
-4. **Update `version.xml`**:
-   - Change the package `name` and `version`
-   - List your `BEASTInterface` providers
+`MultivariateNormalSampler` is the Gaussian version of this idea: it records joint condition/value vectors with an online mean and covariance update, then samples or evaluates the conditional normal distribution. The mixture samplers provide richer conditional proposal families when a single Gaussian is too restrictive.
 
-5. **Replace the example classes** with your own:
-   - See `MyDistribution.java` for the `ScalarDistribution` pattern
-   - See `MyScaleOperator.java` for the `Operator` + `RealScalarParam` pattern
+## Learned Tree-Distance Proposals
 
-6. **Update `src/assembly/beast-package.xml`**:
-   - This file controls what goes into the BEAST package ZIP (built by `release.sh`)
-   - Update the `<includes>` to match your Maven `groupId:artifactId`
-   - Update the `<fileSets>` paths to match your module name (replace `my.beast.example` with your JPMS module name)
-   - Add `<include>` lines for any third-party runtime dependencies your package needs
+These operators learn distributions over taxon-pair or taxon-triplet distances, then propose tree edits by changing those distances directly.
 
-## Key concepts (new spec API)
+Relevant classes:
 
-| Old (deprecated)                    | New (spec)                           |
-|-------------------------------------|--------------------------------------|
-| `RealParameter`                     | `RealScalarParam<D>` / `RealVectorParam<D>` |
-| `ParametricDistribution`            | `ScalarDistribution<S, T>`           |
-| `Prior` wrapper + `ParametricDistribution` | Distribution with `param` input (acts as its own prior) |
-| `lower`/`upper` bounds              | Domain types: `Real`, `PositiveReal`, `NonNegativeReal`, `UnitInterval` |
+- [`adaptiveoperators.TaxaDistanceOperator`](src/main/java/adaptiveoperators/TaxaDistanceOperator.java)
+- [`adaptiveoperators.TripletDistanceOperator`](src/main/java/adaptiveoperators/TripletDistanceOperator.java)
+- [`adaptiveoperators.LogNormalModel`](src/main/java/adaptiveoperators/LogNormalModel.java)
+- [`adaptiveoperators.NeuralLogNormalModel`](src/main/java/adaptiveoperators/NeuralLogNormalModel.java)
 
-## Adding GUI (BEAUti) support
+## Slice-Based Proposals
 
-If your package includes BEAUti input editors, alignment providers, or other
-GUI components, you have two options for how to organise them.
+The slice operators all expose adapted BEAST state as a vector, choose a one-dimensional direction through that vector space, draw a slice level from the current posterior, then use step-out and shrinkage along that line until they find an acceptable point.
 
-### Option A: single module (recommended for most packages)
+There are three variants:
 
-Keep everything in one Maven artifact and one JPMS module. Use `requires static`
-so the module loads without JavaFX on the module path (headless/cluster runs):
+- `StepOutShrinkSliceOperator` is coordinate-wise: it chooses one mutable adapter coordinate, maintains an adaptive window size for that coordinate, and updates only that value.
+- `MultivariateStepOutShrinkSliceOperator` is random-direction slice sampling: it draws a normalized Gaussian direction across all mutable adapter coordinates, applies per-coordinate learning-rate scaling, and slices along that line.
+- `LinCombSliceOperator` is empirical-direction slice sampling: after burn-in it stores recent adapted states, chooses two previous states, and slices along their difference vector. This turns recent posterior movement into proposal directions.
 
-Add the dependency to `pom.xml`:
+Relevant classes:
 
-```xml
-<dependency>
-    <groupId>io.github.compevol</groupId>
-    <artifactId>beast-fx</artifactId>
-    <version>${beast.version}</version>
-</dependency>
-```
+- [`slice.StepOutShrinkSliceOperator`](src/main/java/slice/StepOutShrinkSliceOperator.java)
+- [`slice.MultivariateStepOutShrinkSliceOperator`](src/main/java/slice/MultivariateStepOutShrinkSliceOperator.java)
+- [`slice.LinCombSliceOperator`](src/main/java/slice/LinCombSliceOperator.java)
+- [`mcmc.SliceMCMC`](src/main/java/mcmc/SliceMCMC.java)
 
-In `module-info.java`, declare the GUI dependencies as **static** (compile-time only):
+## Gradient and MALA Proposals
 
-```java
-import adaptiveoperators.MyDistribution;
-import adaptiveoperators.MyScaleOperator;
+The MALA family proposes adapter vectors using gradient-guided Gaussian transitions. `MALAOperator` learns either a neural-network or Gaussian approximation to the gradient during a training phase, then uses a learned covariance for preconditioned proposals. `FisherMALAOperator` adds Fisher-style preconditioning and adaptive step-size behavior. The MAP-guided variants use MAP/cube summaries to guide moves.
 
-open module my.beast.example {
-    requires beast.pkgmgmt;
-    requires beast.base;
-    requires static beast.fx;         // optional at runtime
-    requires static javafx.controls;  // optional at runtime
+Relevant classes:
 
-    exports my.beast.example;
-    exports my.beast.example.app.beauti;  // GUI classes
+- [`mala.MALAOperator`](src/main/java/mala/MALAOperator.java)
+- [`mala.FisherMALAOperator`](src/main/java/mala/FisherMALAOperator.java)
+- [`mala.MAPGuidedMALAOperator`](src/main/java/mala/MAPGuidedMALAOperator.java)
+- [`mala.CubeMAPGuidedMALAOperator`](src/main/java/mala/CubeMAPGuidedMALAOperator.java)
+- [`mcmc.MalaMCMC`](src/main/java/mcmc/MalaMCMC.java)
 
-    provides beast.base.core.BEASTInterface with
-            adaptiveoperators.MyDistribution,
-            adaptiveoperators.MyScaleOperator,
-            my.beast.example.app.beauti.MyAlignmentProvider;
-}
-```
+The XMLs use this family for Gaussian-gradient MALA runs, neural MALA runs, tree MALA runs, and MAP/cube-guided configurations.
 
-**Convention:** place GUI classes in a `*.app.beauti` subpackage to keep them
-separate from core logic.
+## Large-Jump and Mode-Jump Proposals
 
-When running headless (no beast-fx on the module path), the module loads normally.
-BEAUti provider classes are registered by name but never instantiated, so the
-missing GUI dependencies cause no errors. When running with BEAUti, everything
-works as expected.
+Large-jump operators separate jump coordinates from optimization coordinates. A proposal first makes a large move in one adapter group, performs local random-walk optimization in another group, adds covariance-scaled noise, and computes the reverse construction for the Hastings correction. The unified variant also supports MAP jump candidates and transport noise controls.
 
-### Option B: two modules (core + fx)
+Relevant classes:
 
-Split into a parent POM with two submodules: one for core logic and one for GUI.
-This is the pattern used by beast3 itself (`beast-base` + `beast-fx`) and by
-[morph-models](https://github.com/CompEvol/morph-models).
+- [`largejump.LargeJumpMALAOperator`](src/main/java/largejump/LargeJumpMALAOperator.java)
+- [`largejump.UnifiedLargeJumpMALAOperator`](src/main/java/largejump/UnifiedLargeJumpMALAOperator.java)
+- [`mcmc.JumpMCMC`](src/main/java/mcmc/JumpMCMC.java)
 
-Use this when your package has substantial GUI code (multiple custom input
-editors, complex BEAUti panels) that warrants its own module.
+## Preconditioned Crank-Nicolson Proposals
 
-```
-my-package/
-    pom.xml                    (parent, packaging: pom)
-    beast-my-package/          (core module)
-        pom.xml
-        src/main/java/module-info.java
-    beast-my-package-fx/       (GUI module, depends on core)
-        pom.xml
-        src/main/java/module-info.java
-```
+The pCN operators learn a centered covariance over adapted mutable values and then propose by shrinking the current state toward the learned mean plus a covariance-scaled perturbation. The guided mixed variant combines this with guided adapter information.
 
-The core module has no JavaFX dependency at all. The fx module declares
-`requires beast.fx;` and `requires javafx.controls;` as regular (non-static)
-dependencies.
+Relevant classes:
 
-**Trade-off:** cleaner separation, but doubles the number of Eclipse/IDE projects.
-For most packages where the GUI code is one or two classes, Option A is simpler.
+- [`adaptiveoperators.PreconditionedCrankNicolsonOperator`](src/main/java/adaptiveoperators/PreconditionedCrankNicolsonOperator.java)
+- [`adaptiveoperators.GuidedMixedPreconditionedCrankNicolsonOperator`](src/main/java/adaptiveoperators/GuidedMixedPreconditionedCrankNicolsonOperator.java)
 
-## Releasing your package
+## Irreversible Guided Random Walks
 
-The included `release.sh` script automates the full release process: build, package, and
-optionally create a GitHub release.
+The irreversible guided random-walk operator chooses an adapted coordinate, moves in a persistent direction, and flips that direction on rejection.
 
-### 1. Build the package ZIP
+Relevant class:
 
-```bash
-./release.sh
-```
+- [`irreversible.GuidedRandomWalkOperator`](src/main/java/irreversible/GuidedRandomWalkOperator.java)
 
-This will:
-- Read the package name and version from `version.xml`
-- Run `mvn clean package -DskipTests`
-- Assemble a BEAST package ZIP with the correct flat structure
-- Output a file like `MyPackage.v1.0.0.zip`
+## Delayed-Acceptance and ML-Assisted Runs
 
-**Linux/Ubuntu users:** if `./release.sh` fails with errors about `\r` characters, your
-git checkout may have converted line endings to CRLF. Fix with:
+The delayed-acceptance classes use an approximate posterior, including an MLP-backed approximation, to stage accept/reject work.
 
-```bash
-tr -d '\r' < release.sh > release_fixed.sh && mv release_fixed.sh release.sh
-chmod +x release.sh
-```
+Relevant classes:
 
-Or run the script explicitly with bash: `bash release.sh`
+- [`delayedacceptance.DelayedAcceptanceMCMC`](src/main/java/delayedacceptance/DelayedAcceptanceMCMC.java)
+- [`delayedacceptance.MLPPosteriorApproximation`](src/main/java/delayedacceptance/MLPPosteriorApproximation.java)
 
-### 2. Create a GitHub release
+## Adaptive Operator Weighting and Scheduling
 
-```bash
-./release.sh --release
-```
+Two adaptive-control pieces are implemented separately from proposal kernels. `AdaptiveWeightOperator` chooses among child operators and learns their weights through a `WeightScheme`. `DualAveragingOperatorSchedule` provides better schedule-level adaptation compared to Robinson-Monro.
 
-This additionally creates a GitHub release (e.g. `v1.0.0`) with the ZIP attached,
-and prints the CBAN XML entry you'll need for the next step.
+Relevant classes:
 
-### 3. Submit to CBAN
-
-The [CBAN repository](https://github.com/CompEvol/CBAN) is where BEAST's Package
-Manager discovers available packages. To make your package installable:
-
-1. Fork [CompEvol/CBAN](https://github.com/CompEvol/CBAN)
-2. Add your package entry to `packages2.8.xml` (the `--release` flag prints this for you):
-
-```xml
-<package name="MyPackage" version="1.0.0"
-    url="https://github.com/YOU/YOUR-REPO/releases/download/v1.0.0/MyPackage.v1.0.0.zip"
-    projectURL="https://github.com/YOU/YOUR-REPO"
-    description="One-line description of your package">
-    <depends on="BEAST.base" atleast="2.8.0"/>
-</package>
-```
-
-3. Open a pull request against CompEvol/CBAN
-
-Once merged, your package will appear in the BEAST Package Manager.
-
-### 4. Local testing
-
-To test your package locally before releasing, install the built ZIP into BEAST's
-package directory:
-
-```bash
-# Build the ZIP
-./release.sh
-
-# Install to the local BEAST package directory
-PKG=MyPackage                          # your package name from version.xml
-BEAST_PKG_DIR=~/.beast/2.8/$PKG       # macOS and Linux
-# Windows: %USERPROFILE%\.beast\2.8\MyPackage
-
-mkdir -p "$BEAST_PKG_DIR"
-unzip -o "$PKG.v1.0.0.zip" -d "$BEAST_PKG_DIR"
-```
-
-After installation, BEAST/BEAUti will discover the package on next launch. You can
-verify with:
-
-```bash
-packagemanager -list
-```
-
-## Publishing to Maven Central
-
-BEAST 3 can also install packages directly from Maven Central. This is an
-alternative (or complement) to the ZIP/CBAN distribution above.
-
-The recommended path is to publish automatically via GitHub Actions on a
-`v*` tag push. For a full step-by-step setup guide (Sonatype account,
-namespace verification, GPG key, repo secrets, the `ci-publish.yml`
-workflow, troubleshooting), see
-[**`package-release-setup.md`**](https://github.com/CompEvol/beast3/blob/master/scripts/package-release-setup.md)
-in the beast3 repo.
-
-### Quick local deploy (manual alternative)
-
-If you've already configured `~/.m2/settings.xml` with a `central` server
-entry and have GPG set up locally, you can deploy from your machine:
-
-```bash
-mvn clean deploy -Prelease
-```
-
-This builds the JAR (with `version.xml` embedded), generates sources and javadoc
-JARs, signs everything with GPG, and uploads to Maven Central.
-
-### User install
-
-Once published, BEAST 3 users can install your package with:
-
-```
-Package Manager > Install from Maven > groupId:artifactId:version
-```
-
-Or from the command line:
-
-```bash
-packagemanager -maven groupId:artifactId:version
-```
-
-### ZIP structure
-
-The BEAST Package Manager expects a flat ZIP (no wrapper directory) containing:
-
-```
-version.xml            # required — package name, version, service providers
-lib/                   # required — your JARs (and any third-party runtime deps)
-fxtemplates/           # optional — BEAUti templates
-examples/              # optional — example BEAST XML files and data
-```
-
-**Important:** the ZIP must NOT contain a top-level directory named after your package.
-The Package Manager extracts the ZIP into its own directory, so a wrapper would
-cause double-nesting and break service discovery.
-
-## Further reading
-
-- [BEAST 3 source](https://github.com/CompEvol/beast3)
-- [BEAST 2 → 3 migration guide](https://github.com/CompEvol/beast3/blob/master/scripts/migration-guide.md)
-- [morph-models](https://github.com/CompEvol/morph-models) — worked example of a two-module (core + fx) BEAST 3 package (Option B)
+- [`schedule.DualAveragingOperatorSchedule`](src/main/java/schedule/DualAveragingOperatorSchedule.java)
+- [`weightoptimization.AdaptiveWeightOperator`](src/main/java/weightoptimization/AdaptiveWeightOperator.java)
+- [`weightoptimization.RunningAverageScheme`](src/main/java/weightoptimization/RunningAverageScheme.java)
