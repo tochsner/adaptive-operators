@@ -76,9 +76,10 @@ public class CubeAdapter extends BEASTObject implements MAPAdapter {
     @Override
     public double[] getMutable(int nodeId) {
         double[] cubeDistances = TreeUtils.getCubeDistances(this.tree, this.cube);
+        double[] offsets = this.getCubeOffsets(this.tree);
 
         for (int i = 0; i < cubeDistances.length; i++) {
-            cubeDistances[i] = Math.log(cubeDistances[i]);
+            cubeDistances[i] = Math.log(cubeDistances[i] - offsets[i]);
         }
 
         return cubeDistances;
@@ -87,9 +88,10 @@ public class CubeAdapter extends BEASTObject implements MAPAdapter {
     @Override
     public double update(double[] mutable, int nodeId) {
         double[] cubeDistances = new double[this.getNumMutable()];
+        double[] offsets = this.getCubeOffsets(this.tree);
 
         for (int i = 0; i < cubeDistances.length; i++) {
-            cubeDistances[i] = Math.exp(mutable[i]);
+            cubeDistances[i] = Math.exp(mutable[i]) + offsets[i];
         }
         TreeUtils.setCubeDistances(this.tree, this.cube, cubeDistances);
 
@@ -128,16 +130,29 @@ public class CubeAdapter extends BEASTObject implements MAPAdapter {
 
         double[] cube = TreeUtils.getCubeDistances(this.tree, this.cube);
         double[] mapCube = TreeUtils.getCubeDistances(randomMapTree, this.cube);
+        double[] offsets = this.getCubeOffsets(this.tree);
 
         double sumDistances = Arrays.stream(cube).sum();
         double mapSumDistances = Arrays.stream(mapCube).sum();
 
         for (int i = 0; i < this.getNumMutable(); i++) {
             mapCube[i] *= sumDistances / mapSumDistances;
-            mapCube[i] = Math.log(mapCube[i]);
+            mapCube[i] = Math.log(mapCube[i] - offsets[i]);
         }
 
         return mapCube;
+    }
+
+    private double[] getCubeOffsets(Tree tree) {
+        double[] offsets = new double[this.getNumMutable()];
+
+        for (int i = 0; i < offsets.length; i++) {
+            offsets[i] = Math.abs(
+                    tree.getNode(this.cube.get(i)).getHeight()
+                            - tree.getNode(this.cube.get(i + 1)).getHeight());
+        }
+
+        return offsets;
     }
 
 }
