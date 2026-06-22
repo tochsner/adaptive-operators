@@ -48,7 +48,6 @@ open module adaptiveoperators {
     requires org.apache.commons.statistics.distribution;
     requires org.apache.commons.math4.legacy;
     requires org.apache.commons.math4.legacy.exception;
-    requires Cubature;
     requires beagle;
     requires org.apache.commons.math4.legacy.core;
     requires ai.djl.api;

@@ -89,13 +89,6 @@
             </exclusions>
         </dependency>
 
-        <dependency>
-            <groupId>de.labathome</groupId>
-            <artifactId>Cubature</artifactId>
-            <version>1.2.0</version>
-            <scope>compile</scope>
-        </dependency>
-
         <!-- Deep Learning -->
         <dependency>
             <groupId>ai.djl</groupId>
