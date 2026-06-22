@@ -10,6 +10,7 @@ import beast.base.inference.StateNode;
 import beast.base.spec.inference.parameter.RealScalarParam;
 import beast.base.util.Randomizer;
 
+import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Random;
@@ -21,7 +22,7 @@ public class PartialCubeTransportOperator extends Operator {
     public final Input<RealScalarParam<?>> clockRateInput = new Input<>("clockRate", "", null, Input.Validate.OPTIONAL);
 
     // number of distances to consider
-    int WINDOW_SIZE = 3;
+    int WINDOW_SIZE = 2;
 
     double scaleFactor = 1.0;
     Random random = new Random();
@@ -47,10 +48,20 @@ public class PartialCubeTransportOperator extends Operator {
 
         int k = Randomizer.nextInt(cube.size() - this.WINDOW_SIZE);
 
+        // obtain taxa names
+
+        List<String> taxaIds = new ArrayList<>();
+        for (int i = k; i <= k + WINDOW_SIZE; i++) {
+            int nodeNr = cube.get(i);
+            Node node = this.tree.getNode(nodeNr);
+            String taxonId = this.tree.getTaxonId(node);
+            taxaIds.add(taxonId);
+        }
+
         // set up transport
 
         LocalTreeTransport localTreeTransport = new LocalTreeTransport(
-                k, cube, this.alignment, this.clockRate, 2*this.tree.getRoot().getHeight()
+                taxaIds, this.alignment, this.clockRate, 2*this.tree.getRoot().getHeight()
         );
 
         // propose move
