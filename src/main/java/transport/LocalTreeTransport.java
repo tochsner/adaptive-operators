@@ -3,34 +3,45 @@ package transport;
 import beast.base.evolution.alignment.Alignment;
 import beast.base.spec.inference.parameter.RealScalarParam;
 import org.apache.commons.math4.legacy.analysis.UnivariateFunction;
+import org.apache.commons.math4.legacy.analysis.integration.IterativeLegendreGaussIntegrator;
+import org.apache.commons.math4.legacy.analysis.integration.UnivariateIntegrator;
 import org.apache.commons.math4.legacy.analysis.solvers.BrentSolver;
 import org.apache.commons.statistics.distribution.NormalDistribution;
 
+import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.function.Function;
 
 public class LocalTreeTransport {
 
     private static final int MAX_ROOT_EVALUATIONS = 1000;
+    private static final int MAX_INTEGRATION_EVALUATIONS = 1000;
     private static final int MAX_BRACKET_EXPANSIONS = 60;
     private static final double ROOT_RELATIVE_ACCURACY = 1.0E-10;
     private static final double ROOT_ABSOLUTE_ACCURACY = 1.0E-12;
     private static final double ROOT_FUNCTION_ACCURACY = 1.0E-12;
+    private static final double INTEGRATION_RELATIVE_ACCURACY = 1.0E-6;
+    private static final double INTEGRATION_ABSOLUTE_ACCURACY = 1.0E-10;
     private static final double INITIAL_ROOT_UPPER_BOUND = 1.0;
     private static final double MIN_CDF_PROBABILITY = 1.0E-15;
     private static final double MAX_CDF_PROBABILITY = 1.0 - MIN_CDF_PROBABILITY;
     private static final NormalDistribution STANDARD_NORMAL = NormalDistribution.of(0.0, 1.0);
 
+    private final double MAX_INTEGRATION_DISTANCE;
+
     int k;
     LinkedList<Integer> cube;
     Alignment alignment;
     RealScalarParam<?> clockRate;
+    ApproximateFelsenstein approximateFelsenstein;
 
-    public LocalTreeTransport(int k, LinkedList<Integer> cube, Alignment alignment, RealScalarParam<?> clockRate) {
+    public LocalTreeTransport(int k, LinkedList<Integer> cube, Alignment alignment, RealScalarParam<?> clockRate, double maxDistance) {
         this.k = k;
         this.cube = cube;
         this.alignment = alignment;
         this.clockRate = clockRate;
+        this.approximateFelsenstein = new ApproximateFelsenstein(k, cube, alignment, this.clockRate);
+        this.MAX_INTEGRATION_DISTANCE = maxDistance;
     }
 
     public double[] transport(double[] distances) {
@@ -99,10 +110,25 @@ public class LocalTreeTransport {
 
     private double felsensteinCDF(int i, double[] distances) {
         // compute F(d_i | d_0 ... d_{i-1}) for the local Felsenstein likelihood
+
+        double[] denominatorUpperBounds = this.getIntegrationUpperBounds(distances.length);
+        double denominator = this.integrateConditionalLikelihood(i, distances, denominatorUpperBounds);
+
+        if (!Double.isFinite(denominator) || denominator <= 0.0) {
+            throw new IllegalArgumentException("conditional Felsenstein likelihood integral must be finite and positive");
+        }
+
+        double[] numeratorUpperBounds = denominatorUpperBounds.clone();
+        numeratorUpperBounds[i] = Math.min(Math.max(distances[i], 0.0), MAX_INTEGRATION_DISTANCE);
+
+        double numerator = this.integrateConditionalLikelihood(i, distances, numeratorUpperBounds);
+        double cdf = numerator / denominator;
+        return Math.min(MAX_CDF_PROBABILITY, Math.max(MIN_CDF_PROBABILITY, cdf));
     }
 
     private double felsensteinLogPDF(double[] distances) {
         // compute the joint log f(d_1 ... d_i) for the local Felsenstein likelihood
+        return Math.log(this.approximateFelsenstein.getApproximateFelsenstein(distances));
     }
 
     private double findRoot(Function<Double, Double> function) {
@@ -142,6 +168,40 @@ public class LocalTreeTransport {
                 ROOT_FUNCTION_ACCURACY
         );
         return solver.solve(MAX_ROOT_EVALUATIONS, univariateFunction, lower, upper);
+    }
+
+    private double integrateConditionalLikelihood(int firstIntegratedCoordinate, double[] distances, double[] upperBounds) {
+        double[] integrationPoint = distances.clone();
+        return this.integrateCoordinate(firstIntegratedCoordinate, integrationPoint, upperBounds);
+    }
+
+    private double integrateCoordinate(int coordinate, double[] integrationPoint, double[] upperBounds) {
+        if (coordinate == integrationPoint.length) {
+            return this.approximateFelsenstein.getApproximateFelsenstein(integrationPoint);
+        }
+
+        double upperBound = upperBounds[coordinate];
+        if (upperBound <= 0.0) {
+            return 0.0;
+        }
+
+        UnivariateFunction integrand = value -> {
+            integrationPoint[coordinate] = value;
+            return this.integrateCoordinate(coordinate + 1, integrationPoint, upperBounds);
+        };
+
+        UnivariateIntegrator integrator = new IterativeLegendreGaussIntegrator(
+                5,
+                INTEGRATION_RELATIVE_ACCURACY,
+                INTEGRATION_ABSOLUTE_ACCURACY
+        );
+        return integrator.integrate(MAX_INTEGRATION_EVALUATIONS, integrand, 0.0, upperBound);
+    }
+
+    private double[] getIntegrationUpperBounds(int dimension) {
+        double[] upperBounds = new double[dimension];
+        Arrays.fill(upperBounds, MAX_INTEGRATION_DISTANCE);
+        return upperBounds;
     }
 
 }

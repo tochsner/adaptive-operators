@@ -21,7 +21,7 @@ public class ApproximateFelsenstein {
         this.clockRate = Objects.requireNonNullElse(clockRate, new RealScalarParam<>(1.0, PositiveReal.INSTANCE));
     }
 
-    public double getApproximateFelsenstein(double distances) {
+    public double getApproximateFelsenstein(double[] distances) {
 
     }
 

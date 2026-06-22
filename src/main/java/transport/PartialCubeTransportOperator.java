@@ -49,7 +49,9 @@ public class PartialCubeTransportOperator extends Operator {
 
         // set up transport
 
-        LocalTreeTransport localTreeTransport = new LocalTreeTransport(k, cube, this.alignment, this.clockRate);
+        LocalTreeTransport localTreeTransport = new LocalTreeTransport(
+                k, cube, this.alignment, this.clockRate, 2*this.tree.getRoot().getHeight()
+        );
 
         // propose move
 
