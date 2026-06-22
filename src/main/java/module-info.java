@@ -22,6 +22,7 @@ import transforms.RealVectorLogTransform;
 import transforms.SimplexTransform;
 import transforms.IntSimplexRoundTransform;
 import transforms.SimplexRoundTransform;
+import transport.PartialCubeTransportOperator;
 import slice.StepOutShrinkSliceOperator;
 import slice.LinCombSliceOperator;
 import slice.MultivariateStepOutShrinkSliceOperator;
@@ -93,6 +94,7 @@ open module adaptiveoperators {
             TripletDistanceOperator,
             RealVectorIdentityTransform,
             RealScalarSigmoidTransform,
+            PartialCubeTransportOperator,
             IntVectorIdentityTransform,
             RealScalarLogTransform,
             SimplexTransform,
