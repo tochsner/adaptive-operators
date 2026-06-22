@@ -1,6 +1,7 @@
 package transport;
 
 import beast.base.evolution.alignment.Alignment;
+import beast.base.evolution.sitemodel.SiteModelInterface;
 import beast.base.spec.inference.parameter.RealScalarParam;
 import org.apache.commons.statistics.distribution.NormalDistribution;
 
@@ -11,8 +12,9 @@ import java.util.Map;
 
 public class LocalTreeTransport {
 
-    private static final int GRID_SIZE = 15;
+    private static final int GRID_SIZE = 50;
     private static final int LAST_GRID_INDEX = GRID_SIZE - 1;
+    private static final double MIN_GRID_DISTANCE_FRACTION = 1.0 / (2.0 * GRID_SIZE);
     private static final double MIN_CDF_PROBABILITY = 1.0E-15;
     private static final double MAX_CDF_PROBABILITY = 1.0 - MIN_CDF_PROBABILITY;
     private static final double MIN_LOG_DENSITY = 1.0E-300;
@@ -23,23 +25,23 @@ public class LocalTreeTransport {
     private final double gridSpacing;
     private final double[] grid;
 
-    private final double[][] weightGrid;
+    private final double[][] logLikelihoodGrid;
     private final double[][] cdf1GivenD0Grid;
     private final double[] cdf0;
     private final double maxLogLikelihood;
     private final double totalMass;
 
-    public LocalTreeTransport(List<String> taxonIds, Alignment alignment, RealScalarParam<?> clockRate, double maxDistance) {
+    public LocalTreeTransport(List<String> taxonIds, Alignment alignment, SiteModelInterface siteModel, RealScalarParam<?> clockRate, double maxDistance) {
         if (!Double.isFinite(maxDistance) || maxDistance <= 0.0) {
             throw new IllegalArgumentException("maxDistance must be finite and positive");
         }
 
-        GridData gridData = this.getOrBuildGridData(taxonIds, alignment, clockRate, maxDistance);
+        GridData gridData = this.getOrBuildGridData(taxonIds, alignment, siteModel, clockRate, maxDistance);
 
         this.maxDistance = gridData.maxDistance;
         this.gridSpacing = gridData.gridSpacing;
         this.grid = gridData.grid;
-        this.weightGrid = gridData.weightGrid;
+        this.logLikelihoodGrid = gridData.logLikelihoodGrid;
         this.cdf1GivenD0Grid = gridData.cdf1GivenD0Grid;
         this.cdf0 = gridData.cdf0;
         this.maxLogLikelihood = gridData.maxLogLikelihood;
@@ -112,28 +114,33 @@ public class LocalTreeTransport {
         throw new IllegalArgumentException("only two distance dimensions are supported");
     }
 
-    private double felsensteinLogPDF(double[] distances) {
+    public double felsensteinLogPDF(double[] distances) {
         this.validateDistanceDimension(distances);
 
         double clamped0 = this.clampDistance(distances[0]);
         double clamped1 = this.clampDistance(distances[1]);
-        double scaledWeight = Math.max(MIN_LOG_DENSITY, this.bilinearInterpolate(this.weightGrid, clamped0, clamped1));
-        return this.maxLogLikelihood + Math.log(scaledWeight);
+        return this.bilinearInterpolateLogLikelihood(clamped0, clamped1);
     }
 
     private static synchronized GridData getOrBuildGridData(
             List<String> taxonIds,
             Alignment alignment,
+            SiteModelInterface siteModel,
             RealScalarParam<?> clockRate,
             double maxDistance
     ) {
-        GridCacheKey key = new GridCacheKey(taxonIds, System.identityHashCode(alignment), getClockRateValue(clockRate));
+        GridCacheKey key = new GridCacheKey(
+                taxonIds,
+                System.identityHashCode(alignment),
+                System.identityHashCode(siteModel),
+                getClockRateValue(clockRate)
+        );
         GridData cached = GRID_CACHE.get(key);
         if (cached != null && cached.maxDistance >= maxDistance) {
             return cached;
         }
 
-        GridData gridData = buildGridData(taxonIds, alignment, clockRate, maxDistance);
+        GridData gridData = buildGridData(taxonIds, siteModel, alignment, clockRate, maxDistance);
         GRID_CACHE.put(key, gridData);
         return gridData;
     }
@@ -144,19 +151,21 @@ public class LocalTreeTransport {
 
     private static GridData buildGridData(
             List<String> taxonIds,
+            SiteModelInterface siteModel,
             Alignment alignment,
             RealScalarParam<?> clockRate,
             double maxDistance
     ) {
-        double gridSpacing = maxDistance / LAST_GRID_INDEX;
-        double[] grid = buildGrid(gridSpacing);
+        double minGridDistance = maxDistance * MIN_GRID_DISTANCE_FRACTION;
+        double gridSpacing = (maxDistance - minGridDistance) / LAST_GRID_INDEX;
+        double[] grid = buildGrid(minGridDistance, gridSpacing);
         double[][] logLikelihoodGrid = new double[GRID_SIZE][GRID_SIZE];
         Approximate3TaxaFelsenstein approximateFelsenstein =
-                new Approximate3TaxaFelsenstein(taxonIds, alignment, clockRate);
+                new Approximate3TaxaFelsenstein(taxonIds, alignment, siteModel, clockRate);
 
         double maxLogLikelihood = populateLogLikelihoodGrid(approximateFelsenstein, grid, logLikelihoodGrid);
-        double[][] weightGrid = buildWeightGrid(logLikelihoodGrid, maxLogLikelihood);
-        double[][] cdf1GivenD0Grid = buildConditionalCDF1Grid(weightGrid, gridSpacing);
+        double[][] offsetWeightGrid = buildOffsetWeightGrid(logLikelihoodGrid, maxLogLikelihood);
+        double[][] cdf1GivenD0Grid = buildConditionalCDF1Grid(offsetWeightGrid, gridSpacing);
         double[] marginal0 = buildMarginal0(cdf1GivenD0Grid);
         double[] cdf0 = buildCDF0(marginal0, gridSpacing);
         double totalMass = cdf0[LAST_GRID_INDEX];
@@ -166,7 +175,6 @@ public class LocalTreeTransport {
                 gridSpacing,
                 grid,
                 logLikelihoodGrid,
-                weightGrid,
                 cdf1GivenD0Grid,
                 marginal0,
                 cdf0,
@@ -175,10 +183,10 @@ public class LocalTreeTransport {
         );
     }
 
-    private static double[] buildGrid(double gridSpacing) {
+    private static double[] buildGrid(double minGridDistance, double gridSpacing) {
         double[] grid = new double[GRID_SIZE];
         for (int i = 0; i < GRID_SIZE; i++) {
-            grid[i] = i * gridSpacing;
+            grid[i] = minGridDistance + i * gridSpacing;
         }
         return grid;
     }
@@ -209,7 +217,7 @@ public class LocalTreeTransport {
         return maxLogLikelihood;
     }
 
-    private static double[][] buildWeightGrid(double[][] logLikelihoodGrid, double maxLogLikelihood) {
+    private static double[][] buildOffsetWeightGrid(double[][] logLikelihoodGrid, double maxLogLikelihood) {
         double[][] weights = new double[GRID_SIZE][GRID_SIZE];
 
         for (int i = 0; i < GRID_SIZE; i++) {
@@ -224,13 +232,13 @@ public class LocalTreeTransport {
         return weights;
     }
 
-    private static double[][] buildConditionalCDF1Grid(double[][] weightGrid, double gridSpacing) {
+    private static double[][] buildConditionalCDF1Grid(double[][] offsetWeightGrid, double gridSpacing) {
         double[][] cdf = new double[GRID_SIZE][GRID_SIZE];
 
         for (int i = 0; i < GRID_SIZE; i++) {
             for (int j = 1; j < GRID_SIZE; j++) {
                 cdf[i][j] = cdf[i][j - 1]
-                        + trapezoidArea(weightGrid[i][j - 1], weightGrid[i][j], gridSpacing);
+                        + trapezoidArea(offsetWeightGrid[i][j - 1], offsetWeightGrid[i][j], gridSpacing);
             }
         }
 
@@ -307,21 +315,29 @@ public class LocalTreeTransport {
         return this.inverseMonotone(this.grid, conditionalCDF, target);
     }
 
-    private double bilinearInterpolate(double[][] values, double x, double y) {
+    private double bilinearInterpolateLogLikelihood(double x, double y) {
         GridPosition xPosition = this.getGridPosition(x);
         GridPosition yPosition = this.getGridPosition(y);
 
         double lowerY = this.interpolate(
-                values[xPosition.lowerIndex][yPosition.lowerIndex],
-                values[xPosition.lowerIndex][yPosition.upperIndex],
+                this.getFiniteLogLikelihood(xPosition.lowerIndex, yPosition.lowerIndex),
+                this.getFiniteLogLikelihood(xPosition.lowerIndex, yPosition.upperIndex),
                 yPosition.fraction
         );
         double upperY = this.interpolate(
-                values[xPosition.upperIndex][yPosition.lowerIndex],
-                values[xPosition.upperIndex][yPosition.upperIndex],
+                this.getFiniteLogLikelihood(xPosition.upperIndex, yPosition.lowerIndex),
+                this.getFiniteLogLikelihood(xPosition.upperIndex, yPosition.upperIndex),
                 yPosition.fraction
         );
         return this.interpolate(lowerY, upperY, xPosition.fraction);
+    }
+
+    private double getFiniteLogLikelihood(int i, int j) {
+        double logLikelihood = this.logLikelihoodGrid[i][j];
+        if (Double.isFinite(logLikelihood)) {
+            return logLikelihood;
+        }
+        return this.maxLogLikelihood + Math.log(MIN_LOG_DENSITY);
     }
 
     private double linearInterpolate(double[] xValues, double[] yValues, double x) {
@@ -359,10 +375,12 @@ public class LocalTreeTransport {
 
     private GridPosition getGridPosition(double value) {
         double clamped = this.clampDistance(value);
-        int lowerIndex = (int) Math.floor(clamped / this.gridSpacing);
+        int lowerIndex = (int) Math.floor((clamped - this.grid[0]) / this.gridSpacing);
 
         if (lowerIndex >= LAST_GRID_INDEX) {
             return new GridPosition(LAST_GRID_INDEX, LAST_GRID_INDEX, 0.0);
+        } else if (lowerIndex < 0) {
+            return new GridPosition(0, 0, 0.0);
         }
 
         int upperIndex = lowerIndex + 1;
@@ -402,11 +420,12 @@ public class LocalTreeTransport {
     private record GridPosition(int lowerIndex, int upperIndex, double fraction) {
     }
 
-    private record GridCacheKey(List<String> taxonIds, int alignmentIdentity, double clockRate) {
+    private record GridCacheKey(List<String> taxonIds, int alignmentIdentity, int siteModelIdentity, double clockRate) {
 
-        private GridCacheKey(List<String> taxonIds, int alignmentIdentity, double clockRate) {
+        private GridCacheKey(List<String> taxonIds, int alignmentIdentity, int siteModelIdentity, double clockRate) {
             this.taxonIds = List.copyOf(taxonIds);
             this.alignmentIdentity = alignmentIdentity;
+            this.siteModelIdentity = siteModelIdentity;
             this.clockRate = clockRate;
         }
     }
@@ -416,7 +435,6 @@ public class LocalTreeTransport {
             double gridSpacing,
             double[] grid,
             double[][] logLikelihoodGrid,
-            double[][] weightGrid,
             double[][] cdf1GivenD0Grid,
             double[] marginal0,
             double[] cdf0,

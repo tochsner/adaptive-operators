@@ -3,36 +3,43 @@ package transport;
 import adapters.TreeUtils;
 import beast.base.core.Input;
 import beast.base.evolution.alignment.Alignment;
+import beast.base.evolution.sitemodel.SiteModelInterface;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import beast.base.inference.Operator;
+import beast.base.inference.State;
 import beast.base.inference.StateNode;
 import beast.base.spec.inference.parameter.RealScalarParam;
 import beast.base.util.Randomizer;
+import org.apache.commons.math4.legacy.exception.NoBracketingException;
+import slice.SliceOperator;
 
 import java.util.*;
+import java.util.function.Supplier;
 
-public class PartialCubeTransportOperator extends Operator {
+public class PartialCubeTransportOperator extends SliceOperator {
 
     public Input<Tree> treeInput = new Input<>("tree", "");
     public final Input<Alignment> alignmentInput = new Input<>("alignment", "");
+    final public Input<SiteModelInterface> siteModelInput = new Input<>("siteModel", "site model for leafs in the beast.tree");
     public final Input<RealScalarParam<?>> clockRateInput = new Input<>("clockRate", "", null, Input.Validate.OPTIONAL);
 
     // number of distances to consider
     int WINDOW_SIZE = 2;
-    int BURN_IN = 1000;
 
     double scaleFactor = 1.0;
     Random random = new Random();
 
     Tree tree;
     Alignment alignment;
+    SiteModelInterface siteModel;
     RealScalarParam<?> clockRate;
 
     @Override
     public void initAndValidate() {
         this.tree = this.treeInput.get();
         this.alignment = this.alignmentInput.get();
+        this.siteModel = this.siteModelInput.get();
         this.clockRate = this.clockRateInput.get();
     }
 
@@ -40,10 +47,12 @@ public class PartialCubeTransportOperator extends Operator {
 
     @Override
     public double proposal() {
-        this.count++;
+        return 0;
+    }
 
-        if (this.count < BURN_IN) return Double.NEGATIVE_INFINITY;
-        else if (this.count == BURN_IN) System.out.println("Start transporting cubes");
+    @Override
+    public double proposal(Supplier<Double> computeCurrentLogLikelihood, State state) {
+        if (count++ < 100010) return Double.NEGATIVE_INFINITY;
 
         // choose new compatible cube
 
@@ -65,24 +74,63 @@ public class PartialCubeTransportOperator extends Operator {
 
         // set up transport
 
+        double maxHeight = 4*this.tree.getRoot().getHeight();
         LocalTreeTransport localTreeTransport = new LocalTreeTransport(
-                taxaIds, this.alignment, this.clockRate, 2*this.tree.getRoot().getHeight()
+                taxaIds, this.alignment, this.siteModel, this.clockRate, maxHeight
         );
 
         // propose move
 
-        double[] currentCubeDistances = currentCubeDistances = TreeUtils.getCubeDistances(this.tree, cube);
+        double[] currentCubeDistances = null;
+        try {
+            currentCubeDistances = TreeUtils.getCubeDistances(this.tree, cube);
+        } catch (Exception e) {
+            System.out.println("A" + e);
+            throw new RuntimeException(e);
+        }
 
         double[] currentState = new double[WINDOW_SIZE];
         System.arraycopy(currentCubeDistances, k, currentState, 0, WINDOW_SIZE);
 
-        double[] currentTransportedState = localTreeTransport.transport(currentState);
+        // print values
+
+        for (int i = 0; i < 100; i++) {
+            currentState[0] = (i+1.0) * maxHeight / 100;
+
+            for (int j = 0; j < 100; j++) {
+                currentState[1] = (j+1.0) * maxHeight / 100;
+
+                this.updateDistances(cube, k, currentState.clone());
+
+                double real = computeCurrentLogLikelihood.get();
+                double approx = localTreeTransport.felsensteinLogPDF(currentState.clone());
+
+                System.out.println(currentState[0] + "," + currentState[1] + "," + real + "," + approx);
+            }
+        }
+
+        System.exit(0);
+
+        double[] currentTransportedState = null;
+        try {
+            currentTransportedState = localTreeTransport.transport(currentState);
+        } catch (RuntimeException e) {
+            System.out.println("B" + e);
+            return Double.NEGATIVE_INFINITY;
+        }
+
         double[] newTransportedState = new double[WINDOW_SIZE];
         for (int i = 0; i < WINDOW_SIZE; i++) {
             newTransportedState[i] = currentTransportedState[i] + Randomizer.nextGaussian() * this.scaleFactor;
         }
 
-        double[] newState = localTreeTransport.transportBack(newTransportedState);
+        double[] newState = null;
+        try {
+            newState = localTreeTransport.transportBack(newTransportedState);
+        } catch (NoBracketingException e) {
+            System.out.println("C" + e);
+            return Double.NEGATIVE_INFINITY;
+        }
 
         if (!this.validatedDistances(newState)) {
             System.out.println("Invalid distances");
@@ -96,6 +144,8 @@ public class PartialCubeTransportOperator extends Operator {
         // compute log HR correction
 
         double logHR = localTreeTransport.getTransportCorrection(currentState, newState, currentTransportedState, newTransportedState);
+
+        System.out.println("OK " + logHR);
 
         return logHR;
     }
