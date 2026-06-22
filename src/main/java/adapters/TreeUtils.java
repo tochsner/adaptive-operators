@@ -8,20 +8,32 @@ import java.util.*;
 public class TreeUtils {
 
     public static MRCA getCommonAncestor(Node nodeA, Node nodeB) {
+        Set<Node> ancestorsA = new HashSet<>();
         Set<Node> path = new HashSet<>();
 
-        while (nodeA != nodeB) {
-            path.add(nodeA);
-            path.add(nodeB);
-
-            if (nodeA.getHeight() < nodeB.getHeight()) {
-                nodeA = nodeA.getParent();
-            } else {
-                nodeB = nodeB.getParent();
-            }
+        Node current = nodeA;
+        while (current != null) {
+            ancestorsA.add(current);
+            current = current.getParent();
         }
 
-        return new MRCA(nodeA, path);
+        Node mrca = nodeB;
+        while (mrca != null && !ancestorsA.contains(mrca)) {
+            path.add(mrca);
+            mrca = mrca.getParent();
+        }
+
+        if (mrca == null) {
+            throw new IllegalArgumentException("Nodes are not part of the same tree");
+        }
+
+        current = nodeA;
+        while (current != mrca) {
+            path.add(current);
+            current = current.getParent();
+        }
+
+        return new MRCA(mrca, path);
     }
 
     public static double getDistance(Node nodeA, Node nodeB, Tree tree) {

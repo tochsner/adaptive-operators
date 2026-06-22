@@ -20,6 +20,31 @@ import static org.assertj.core.api.Assertions.within;
 class TreeUtilsTest {
 
     @Test
+    void getCommonAncestorCanFindParentWithSameHeightAsChildren() {
+        TreeParser tree = parseTree("((A:0.0,B:0.0):1.0,C:1.0):0.0;");
+        Node nodeA = findLeaf(tree.getRoot(), "A");
+        Node nodeB = findLeaf(tree.getRoot(), "B");
+
+        TreeUtils.MRCA mrcaInfo = TreeUtils.getCommonAncestor(nodeA, nodeB);
+
+        assertThat(mrcaInfo.mrca()).isSameAs(nodeA.getParent());
+        assertThat(mrcaInfo.mrca().getHeight()).isEqualTo(nodeA.getHeight());
+        assertThat(mrcaInfo.path()).containsExactlyInAnyOrder(nodeA, nodeB);
+    }
+
+    @Test
+    void getCommonAncestorCanFindAncestorWithSameHeightAsChild() {
+        TreeParser tree = parseTree("((A:0.0,B:0.0):1.0,C:1.0):0.0;");
+        Node nodeA = findLeaf(tree.getRoot(), "A");
+        Node parent = nodeA.getParent();
+
+        TreeUtils.MRCA mrcaInfo = TreeUtils.getCommonAncestor(nodeA, parent);
+
+        assertThat(mrcaInfo.mrca()).isSameAs(parent);
+        assertThat(mrcaInfo.path()).containsExactly(nodeA);
+    }
+
+    @Test
     void changeNodeDistanceCanDecreaseDistanceWithoutChangingTopology() {
         TreeParser tree = parseTree("((A:3.0,B:3.0):1.0,C:4.0):0.0;");
         Node nodeA = findLeaf(tree.getRoot(), "A");

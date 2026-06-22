@@ -2,7 +2,6 @@ package transport;
 
 import beast.base.evolution.alignment.Alignment;
 import beast.base.spec.inference.parameter.RealScalarParam;
-import beast.base.util.Randomizer;
 import de.labathome.cubature.Cubature;
 import de.labathome.cubature.CubatureError;
 import org.apache.commons.math4.legacy.analysis.UnivariateFunction;
@@ -17,14 +16,12 @@ public class LocalTreeTransport {
 
     private static final int MAX_ROOT_EVALUATIONS = 1000;
     private static final int MAX_INTEGRATION_EVALUATIONS = 100000;
-    private static final int MAX_BRACKET_EXPANSIONS = 1000;
     private static final double ROOT_RELATIVE_ACCURACY = 1.0E-3;
     private static final double ROOT_ABSOLUTE_ACCURACY = 1.0E-3;
     private static final double ROOT_FUNCTION_ACCURACY = 1.0E-3;
     private static final double INTEGRATION_RELATIVE_ACCURACY = 1.0E-3;
     private static final double INTEGRATION_ABSOLUTE_ACCURACY = 1.0E-3;
-    private static final double INITIAL_ROOT_UPPER_BOUND = 1.0;
-    private static final double MIN_CDF_PROBABILITY = 1.0E-15;
+    private static final double MIN_CDF_PROBABILITY = 1.0E-100;
     private static final double MAX_CDF_PROBABILITY = 1.0 - MIN_CDF_PROBABILITY;
     private static final NormalDistribution STANDARD_NORMAL = NormalDistribution.of(0.0, 1.0);
 
@@ -33,13 +30,13 @@ public class LocalTreeTransport {
     int k;
     Alignment alignment;
     RealScalarParam<?> clockRate;
-    ApproximateFelsenstein approximateFelsenstein;
+    Approximate3TaxaFelsenstein approximateFelsenstein;
     private double logLikelihoodOffset = 0.0;
 
      public LocalTreeTransport(List<String> taxonIds, Alignment alignment, RealScalarParam<?> clockRate, double maxDistance) {
         this.alignment = alignment;
         this.clockRate = clockRate;
-        this.approximateFelsenstein = new ApproximateFelsenstein(taxonIds, alignment, this.clockRate);
+        this.approximateFelsenstein = new Approximate3TaxaFelsenstein(taxonIds, alignment, this.clockRate);
         this.MAX_INTEGRATION_DISTANCE = 2*maxDistance;
     }
 
@@ -57,6 +54,10 @@ public class LocalTreeTransport {
             );
         }
 
+        if (Arrays.stream(transported).anyMatch(Double::isInfinite)) {
+            throw new IllegalStateException();
+        }
+
         return transported;
     }
 
@@ -72,7 +73,7 @@ public class LocalTreeTransport {
                     x -> {
                         distances[tempI] = x;
                         return this.felsensteinCDF(tempI, distances) - this.gaussianCDF(transportedState[tempI]);
-                    }
+                    }, 0, this.MAX_INTEGRATION_DISTANCE
             );
         }
 
@@ -115,8 +116,12 @@ public class LocalTreeTransport {
         double[] denominatorUpperBounds = this.getIntegrationUpperBounds(distances.length);
         double denominator = this.integrateConditionalLikelihood(i, distances, denominatorUpperBounds);
 
-        if (!Double.isFinite(denominator) || denominator <= 0.0) {
+        if (!Double.isFinite(denominator) || denominator < 0.0) {
             throw new IllegalArgumentException("conditional Felsenstein likelihood integral must be finite and positive");
+        }
+
+        if (denominator == 0.0) {
+            return 0.0;
         }
 
         double[] numeratorUpperBounds = denominatorUpperBounds.clone();
@@ -132,36 +137,7 @@ public class LocalTreeTransport {
         return this.approximateFelsenstein.getApproximateLogFelsenstein(distances);
     }
 
-    private double findRoot(Function<Double, Double> function) {
-        double lower = 0.0;
-        double lowerValue = function.apply(lower);
-        if (!Double.isFinite(lowerValue)) {
-            throw new IllegalArgumentException("root function must be finite at the lower bound");
-        }
-        if (lowerValue == 0.0) {
-            return lower;
-        }
-
-        double upper = INITIAL_ROOT_UPPER_BOUND;
-        double upperValue = function.apply(upper);
-        if (!Double.isFinite(upperValue)) {
-            throw new IllegalArgumentException("root function must be finite at the initial upper bound");
-        }
-
-        int expansions = 0;
-        while (Math.signum(lowerValue) == Math.signum(upperValue) && expansions < MAX_BRACKET_EXPANSIONS) {
-            upper *= 2.0;
-            upperValue = function.apply(upper);
-            if (!Double.isFinite(upperValue)) {
-                throw new IllegalArgumentException("root function became non-finite while expanding the bracket");
-            }
-            expansions++;
-        }
-
-        if (Math.signum(lowerValue) == Math.signum(upperValue)) {
-            throw new IllegalArgumentException("could not bracket root for distance transform");
-        }
-
+    private double findRoot(Function<Double, Double> function, double lower, double upper) {
         UnivariateFunction univariateFunction = function::apply;
         BrentSolver solver = new BrentSolver(
                 ROOT_RELATIVE_ACCURACY,
@@ -213,10 +189,6 @@ public class LocalTreeTransport {
             double[] distances = context.distances.clone();
             for (int coordinate = 0; coordinate < points.length; coordinate++) {
                 distances[context.firstIntegratedCoordinate + coordinate] = points[coordinate][point];
-            }
-
-            for (int i = 0; i < distances.length; i++) {
-                distances[i] += Randomizer.nextGaussian() * 1e-10;
             }
 
             values[0][point] = Math.exp(this.felsensteinLogPDF(distances) - this.logLikelihoodOffset);

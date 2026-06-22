@@ -9,11 +9,9 @@ import beast.base.inference.Operator;
 import beast.base.inference.StateNode;
 import beast.base.spec.inference.parameter.RealScalarParam;
 import beast.base.util.Randomizer;
+import org.apache.commons.math4.legacy.exception.NoBracketingException;
 
-import java.util.ArrayList;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Random;
+import java.util.*;
 
 public class PartialCubeTransportOperator extends Operator {
 
@@ -38,8 +36,12 @@ public class PartialCubeTransportOperator extends Operator {
         this.clockRate = this.clockRateInput.get();
     }
 
+    int count = 0;
+
     @Override
     public double proposal() {
+        if (count++ < 1000) return Double.NEGATIVE_INFINITY;
+
         // choose new compatible cube
 
         LinkedList<Integer> cube = TreeUtils.getRandomCompatibleCube(this.tree.getRoot(), this.random);
@@ -66,19 +68,42 @@ public class PartialCubeTransportOperator extends Operator {
 
         // propose move
 
-        double[] currentCubeDistances = TreeUtils.getCubeDistances(this.tree, cube);
+        double[] currentCubeDistances = null;
+        try {
+            currentCubeDistances = TreeUtils.getCubeDistances(this.tree, cube);
+        } catch (Exception e) {
+            System.out.println("A" + e);
+            throw new RuntimeException(e);
+        }
 
         double[] currentState = new double[WINDOW_SIZE];
         System.arraycopy(currentCubeDistances, k, currentState, 0, WINDOW_SIZE);
 
-        double[] currentTransportedState = localTreeTransport.transport(currentState);
+        double[] currentTransportedState = null;
+        try {
+            currentTransportedState = localTreeTransport.transport(currentState);
+        } catch (RuntimeException e) {
+            System.out.println("B" + e);
+            return Double.NEGATIVE_INFINITY;
+        }
 
         double[] newTransportedState = new double[WINDOW_SIZE];
         for (int i = 0; i < WINDOW_SIZE; i++) {
             newTransportedState[i] = currentTransportedState[i] + Randomizer.nextGaussian() * this.scaleFactor;
         }
 
-        double[] newState = localTreeTransport.transportBack(newTransportedState);
+        double[] newState = null;
+        try {
+            newState = localTreeTransport.transportBack(newTransportedState);
+        } catch (NoBracketingException e) {
+            System.out.println("C" + e);
+            return Double.NEGATIVE_INFINITY;
+        }
+
+        if (!this.validatedDistances(newState)) {
+            System.out.println("Invalid distances");
+            return Double.NEGATIVE_INFINITY;
+        }
 
         // update the tree
 
@@ -88,7 +113,19 @@ public class PartialCubeTransportOperator extends Operator {
 
         double logHR = localTreeTransport.getTransportCorrection(currentState, newState, currentTransportedState, newTransportedState);
 
+        System.out.println("OK " + logHR);
+
         return logHR;
+    }
+
+    private boolean validatedDistances(double[] newState) {
+        for (Double value : newState) {
+            if (value == 0.0 || !Double.isFinite(value)) return false;
+        }
+
+        if (Arrays.stream(newState).distinct().count() != newState.length) return false;
+
+        return true;
     }
 
     private void updateDistances(LinkedList<Integer> cube, int k, double[] distances) {
