@@ -123,16 +123,20 @@ public class StepOutShrinkSliceOperator extends SliceOperator {
 
         // expand lower limit if needed
 
-        while (isIn.apply(l) && -20 < l) {
+        while (isIn.apply(l)) {
             l -= windowSize;
             stepOutCount++;
+
+            if (stepOutCount > 10) return Double.NEGATIVE_INFINITY;
         }
 
         // expand upper limit if needed
 
-        while (isIn.apply(r) && r < 20) {
+        while (isIn.apply(r)) {
             r += windowSize;
             stepOutCount++;
+
+            if (stepOutCount > 10) return Double.NEGATIVE_INFINITY;
         }
 
         // sample from current slice
@@ -153,6 +157,8 @@ public class StepOutShrinkSliceOperator extends SliceOperator {
 
             newX = l + Randomizer.nextDouble() * (r - l);
             newLogDensity = evaluateAt.apply(newX);
+
+            if (shrinkCount > 10) return Double.NEGATIVE_INFINITY;
         }
 
         this.updateWindowSize(globalParamIdx, stepOutCount, shrinkCount);

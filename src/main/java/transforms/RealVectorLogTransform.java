@@ -30,6 +30,7 @@ public class RealVectorLogTransform extends BEASTObject implements RealVectorTra
     @Override
     public void set(Double[] value) {
         for (int i = 0; i < this.parameter.size(); i++) {
+            if (!Double.isFinite(Math.exp(value[i]))) throw new RuntimeException("NaN detection");
             this.parameter.set(i, Math.exp(value[i]));
         }
     }

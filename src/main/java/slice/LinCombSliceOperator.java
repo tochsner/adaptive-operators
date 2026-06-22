@@ -17,7 +17,7 @@ import java.util.function.Supplier;
 
 public class LinCombSliceOperator extends SliceOperator {
 
-    private static final double BURN_IN = 9_000;
+    private static final double BURN_IN = 5_000;
     private static final double NUM_RECENT_SAMPLES = 10_000;
 
     private static final double TARGET_STEP_OUT_COUNT = 1.0;
@@ -131,16 +131,20 @@ public class LinCombSliceOperator extends SliceOperator {
 
         // expand lower limit if needed
 
-        while (isIn.apply(l) && stepOutCount < 10) {
+        while (isIn.apply(l)) {
             l -= windowSize;
             stepOutCount++;
+
+            if (stepOutCount > 10) return Double.NEGATIVE_INFINITY;
         }
 
         // expand upper limit if needed
 
-        while (isIn.apply(r) && stepOutCount < 10) {
+        while (isIn.apply(r)) {
             r += windowSize;
             stepOutCount++;
+
+            if (stepOutCount > 10) return Double.NEGATIVE_INFINITY;
         }
 
         // sample from current slice
@@ -161,6 +165,8 @@ public class LinCombSliceOperator extends SliceOperator {
 
             newX = l + Randomizer.nextDouble() * (r - l);
             newLogDensity = evaluateAt.apply(newX);
+
+            if (shrinkCount > 10) return Double.NEGATIVE_INFINITY;
         }
 
         this.updateWindowSize(stepOutCount, shrinkCount);

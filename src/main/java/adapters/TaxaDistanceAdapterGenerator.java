@@ -19,7 +19,7 @@ public class TaxaDistanceAdapterGenerator extends BEASTObject implements Adapter
     public final Input<RealScalar<?>> clockRateInput = new Input<>("clockRate", "");
     public final Input<RealVector<?>> clockRatesInput = new Input<>("clockRates", "");
     public final Input<Integer> numberOfPairsInput = new Input<>("numberOfPairs",
-            "number of taxon triplets to sample", 100);
+            "number of taxon triplets to sample", 256);
 
     private Tree tree;
     private RealVector<?> clockRates;

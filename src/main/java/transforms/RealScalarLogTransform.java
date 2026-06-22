@@ -24,6 +24,7 @@ public class RealScalarLogTransform extends BEASTObject implements RealScalarTra
 
     @Override
     public void set(Double value) {
+        if (!Double.isFinite(Math.exp(value) + this.parameter.getLower())) throw new RuntimeException("NaN detection");
         this.parameter.set(Math.exp(value) + this.parameter.getLower());
     }
 

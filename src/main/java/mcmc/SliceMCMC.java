@@ -22,9 +22,13 @@ public class SliceMCMC extends MCMC {
             return posterior.calculateLogP();
         };
 
-        final double logHastingsRatio;
+        double logHastingsRatio;
         if (operator instanceof SliceOperator sliceOperator) {
-            logHastingsRatio = sliceOperator.proposal(computeCurrentLogLikelihood, this.state);
+            try {
+                logHastingsRatio = sliceOperator.proposal(computeCurrentLogLikelihood, this.state);
+            } catch (Exception e) {
+                logHastingsRatio = Double.NEGATIVE_INFINITY;
+            }
         } else {
             logHastingsRatio = operator.proposal();
         }
@@ -54,6 +58,10 @@ public class SliceMCMC extends MCMC {
                 }
                 state.restore();
                 state.restoreCalculationNodes();
+
+                if (operator instanceof SliceOperator) {
+                    this.robustlyRecalculate();
+                }
             }
             state.setEverythingDirty(false);
         } else {
@@ -67,9 +75,29 @@ public class SliceMCMC extends MCMC {
                 state.setEverythingDirty(false);
                 state.restoreCalculationNodes();
             }
+
+            if (operator instanceof SliceOperator) {
+                this.robustlyRecalculate();
+            }
+
         }
         log(sampleNr);
         return operator;
+    }
+
+    /**
+     * Recompute the whole posterior from scratch and leave the cache clean and consistent with the
+     * current state. Used to recover after a rejected jump proposal, whose inner walk corrupts the
+     * incremental cache beyond what {@code restoreCalculationNodes()} can undo. Must only be called
+     * after {@code state.restore()}, never before, because {@code setEverythingDirty(true)} marks
+     * every node dirty without backing it up.
+     */
+    private void robustlyRecalculate() {
+        state.setEverythingDirty(true);
+        state.checkCalculationNodesDirtiness();
+        posterior.calculateLogP();
+        state.setEverythingDirty(false);
+        state.acceptCalculationNodes();
     }
 
 }
