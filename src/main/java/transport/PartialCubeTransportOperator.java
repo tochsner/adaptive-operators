@@ -6,7 +6,6 @@ import beast.base.evolution.alignment.Alignment;
 import beast.base.evolution.sitemodel.SiteModelInterface;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
-import beast.base.inference.Operator;
 import beast.base.inference.State;
 import beast.base.inference.StateNode;
 import beast.base.spec.inference.parameter.RealScalarParam;
@@ -26,7 +25,7 @@ public class PartialCubeTransportOperator extends SliceOperator {
 
     // number of distances to consider
     int WINDOW_SIZE = 2;
-    int BURN_IN = 10001;
+    int BURN_IN = 2000;
 
     double scaleFactor = 1.0;
     Random random = new Random();
@@ -63,7 +62,19 @@ public class PartialCubeTransportOperator extends SliceOperator {
 
         // choose window
 
-        int k = Randomizer.nextInt(cube.size() - this.WINDOW_SIZE);
+        int k = 0;
+
+        for (int i = 0; i <= cube.size(); i++) {
+            int nodeNr = cube.get(i);
+            Node node = this.tree.getNode(nodeNr);
+            String taxonId = this.tree.getTaxonId(node);
+            if (taxonId.equals("CY011616_1_2001.52054795")) {
+                k = i;
+                break;
+            }
+        }
+
+        // int k = Randomizer.nextInt(cube.size() - this.WINDOW_SIZE);
 
         // obtain taxa names
 
@@ -97,7 +108,7 @@ public class PartialCubeTransportOperator extends SliceOperator {
 
         // print values
 
-        boolean debug = false;
+        boolean debug = true;
 
         if (debug) {
             System.arraycopy(currentCubeDistances, k, currentState, 0, WINDOW_SIZE);
@@ -217,8 +228,6 @@ public class PartialCubeTransportOperator extends SliceOperator {
         double delta = this.calcDelta(logAlpha);
         delta += Math.log(this.scaleFactor);
         this.scaleFactor = Math.exp(delta);
-
-        if (Randomizer.nextGaussian() < 0.01) System.out.println(this.scaleFactor);
     }
 
     @Override

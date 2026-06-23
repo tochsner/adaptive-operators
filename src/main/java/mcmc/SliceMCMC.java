@@ -24,11 +24,7 @@ public class SliceMCMC extends MCMC {
 
         double logHastingsRatio;
         if (operator instanceof SliceOperator sliceOperator) {
-            try {
-                logHastingsRatio = sliceOperator.proposal(computeCurrentLogLikelihood, this.state);
-            } catch (Exception e) {
-                logHastingsRatio = Double.NEGATIVE_INFINITY;
-            }
+            logHastingsRatio = sliceOperator.proposal(computeCurrentLogLikelihood, this.state);
         } else {
             logHastingsRatio = operator.proposal();
         }

@@ -12,7 +12,7 @@ import java.util.Map;
 
 public class LocalTreeTransport {
 
-    private static final int GRID_SIZE = 20;
+    private static final int GRID_SIZE = 25;
     private static final int LAST_GRID_INDEX = GRID_SIZE - 1;
     private static final double MIN_GRID_DISTANCE_FRACTION = 1.0 / (2.0 * GRID_SIZE);
     private static final double MIN_CDF_PROBABILITY = 1.0E-15;
@@ -149,7 +149,6 @@ public class LocalTreeTransport {
                 grid,
                 logLikelihoodGrid,
                 cdf1GivenD0Grid,
-                marginal0,
                 cdf0,
                 maxLogLikelihood,
                 totalMass
@@ -407,23 +406,12 @@ public class LocalTreeTransport {
     private record GridPosition(int lowerIndex, int upperIndex, double fraction) {
     }
 
-    private record GridCacheKey(List<String> taxonIds, int alignmentIdentity, int siteModelIdentity, double clockRate) {
-
-        private GridCacheKey(List<String> taxonIds, int alignmentIdentity, int siteModelIdentity, double clockRate) {
-            this.taxonIds = List.copyOf(taxonIds);
-            this.alignmentIdentity = alignmentIdentity;
-            this.siteModelIdentity = siteModelIdentity;
-            this.clockRate = clockRate;
-        }
-    }
-
     private record GridData(
             double maxDistance,
             double gridSpacing,
             double[] grid,
             double[][] logLikelihoodGrid,
             double[][] cdf1GivenD0Grid,
-            double[] marginal0,
             double[] cdf0,
             double maxLogLikelihood,
             double totalMass
