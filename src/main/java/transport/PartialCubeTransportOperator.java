@@ -25,7 +25,7 @@ public class PartialCubeTransportOperator extends SliceOperator {
 
     // number of distances to consider
     int WINDOW_SIZE = 2;
-    int BURN_IN = 2000;
+    int BURN_IN = 4000;
 
     double scaleFactor = 1.0;
     Random random = new Random();
@@ -76,14 +76,16 @@ public class PartialCubeTransportOperator extends SliceOperator {
 
         // int k = Randomizer.nextInt(cube.size() - this.WINDOW_SIZE);
 
-        // obtain taxa names
+        // obtain taxa
 
         List<String> taxaIds = new ArrayList<>();
+        List<Double> taxaHeights = new ArrayList<>();
         for (int i = k; i <= k + WINDOW_SIZE; i++) {
             int nodeNr = cube.get(i);
             Node node = this.tree.getNode(nodeNr);
             String taxonId = this.tree.getTaxonId(node);
             taxaIds.add(taxonId);
+            taxaHeights.add(node.getHeight());
         }
 
         // propose move
@@ -103,7 +105,7 @@ public class PartialCubeTransportOperator extends SliceOperator {
 
         double maxHeight = 4* Arrays.stream(currentState).max().orElseThrow();
         LocalTreeTransport localTreeTransport = new LocalTreeTransport(
-                taxaIds, this.alignment, this.siteModel, this.clockRate, maxHeight
+                taxaIds, taxaHeights, this.alignment, this.siteModel, this.clockRate, maxHeight
         );
 
         // print values
@@ -119,10 +121,10 @@ public class PartialCubeTransportOperator extends SliceOperator {
                 for (int j = 0; j < 100; j++) {
                     currentState[1] = (j + 1.0) * maxHeight / 100;
 
-                    this.updateDistances(cube, k, currentState.clone());
+                    this.updateDistances(cube, k, localTreeTransport.unshiftDistances(currentState.clone()));
 
                     double real = computeCurrentLogLikelihood.get();
-                    double approx = localTreeTransport.felsensteinLogPDF(currentState.clone());
+                    double approx = localTreeTransport.felsensteinLogPDF(localTreeTransport.unshiftDistances(currentState.clone()));
 
                     System.out.println("grid," + currentState[0] + "," + currentState[1] + "," + real + "," + approx);
                 }

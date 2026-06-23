@@ -23,6 +23,7 @@ public class LocalTreeTransport {
     private final double maxDistance;
     private final double gridSpacing;
     private final double[] grid;
+    private final double[] distanceOffsets;
 
     private final double[][] logLikelihoodGrid;
     private final double[][] cdf1GivenD0Grid;
@@ -30,16 +31,17 @@ public class LocalTreeTransport {
     private final double maxLogLikelihood;
     private final double totalMass;
 
-    public LocalTreeTransport(List<String> taxonIds, Alignment alignment, SiteModelInterface siteModel, RealScalarParam<?> clockRate, double maxDistance) {
+    public LocalTreeTransport(List<String> taxonIds, List<Double> taxonHeights, Alignment alignment, SiteModelInterface siteModel, RealScalarParam<?> clockRate, double maxDistance) {
         if (!Double.isFinite(maxDistance) || maxDistance <= 0.0) {
             throw new IllegalArgumentException("maxDistance must be finite and positive");
         }
 
-        GridData gridData = buildGridData(taxonIds, siteModel, alignment, clockRate, maxDistance);
+        GridData gridData = buildGridData(taxonIds, taxonHeights, siteModel, alignment, clockRate, maxDistance);
 
         this.maxDistance = gridData.maxDistance;
         this.gridSpacing = gridData.gridSpacing;
         this.grid = gridData.grid;
+        this.distanceOffsets = gridData.distanceOffsets;
         this.logLikelihoodGrid = gridData.logLikelihoodGrid;
         this.cdf1GivenD0Grid = gridData.cdf1GivenD0Grid;
         this.cdf0 = gridData.cdf0;
@@ -55,8 +57,9 @@ public class LocalTreeTransport {
         this.validateDistanceDimension(distances);
 
         double[] transported = new double[distances.length];
-        transported[0] = this.invGaussianCDF(this.felsensteinCDF(0, distances));
-        transported[1] = this.invGaussianCDF(this.felsensteinCDF(1, distances));
+        double[] shiftedDistances = this.shiftDistances(distances);
+        transported[0] = this.invGaussianCDF(this.felsensteinCDF(0, shiftedDistances));
+        transported[1] = this.invGaussianCDF(this.felsensteinCDF(1, shiftedDistances));
 
         if (Arrays.stream(transported).anyMatch(Double::isInfinite)) {
             throw new IllegalStateException("transport produced infinite Gaussian coordinates");
@@ -72,7 +75,7 @@ public class LocalTreeTransport {
         distances[0] = this.inverseCDF0(this.gaussianCDF(transportedState[0]));
         distances[1] = this.inverseCDF1(distances[0], this.gaussianCDF(transportedState[1]));
 
-        return distances;
+        return this.unshiftDistances(distances);
     }
 
     public double getTransportCorrection(
@@ -116,18 +119,21 @@ public class LocalTreeTransport {
     public double felsensteinLogPDF(double[] distances) {
         this.validateDistanceDimension(distances);
 
-        double clamped0 = this.clampDistance(distances[0]);
-        double clamped1 = this.clampDistance(distances[1]);
+        double[] shiftedDistances = this.shiftDistances(distances);
+        double clamped0 = this.clampDistance(shiftedDistances[0]);
+        double clamped1 = this.clampDistance(shiftedDistances[1]);
         return this.bilinearInterpolateLogLikelihood(clamped0, clamped1);
     }
 
     private static GridData buildGridData(
             List<String> taxonIds,
+            List<Double> taxonHeights,
             SiteModelInterface siteModel,
             Alignment alignment,
             RealScalarParam<?> clockRate,
             double maxDistance
     ) {
+        double[] distanceOffsets = buildDistanceOffsets(taxonHeights);
         Approximate3TaxaFelsenstein approximateFelsenstein = new Approximate3TaxaFelsenstein(taxonIds, alignment, siteModel, clockRate);
 
         double minGridDistance = maxDistance * MIN_GRID_DISTANCE_FRACTION;
@@ -135,7 +141,7 @@ public class LocalTreeTransport {
         double[] grid = buildGrid(minGridDistance, gridSpacing);
 
         double[][] logLikelihoodGrid = new double[GRID_SIZE][GRID_SIZE];
-        double maxLogLikelihood = populateLogLikelihoodGrid(approximateFelsenstein, grid, logLikelihoodGrid);
+        double maxLogLikelihood = populateLogLikelihoodGrid(approximateFelsenstein, grid, distanceOffsets, logLikelihoodGrid);
 
         double[][] offsetWeightGrid = buildOffsetWeightGrid(logLikelihoodGrid, maxLogLikelihood);
         double[][] cdf1GivenD0Grid = buildConditionalCDF1Grid(offsetWeightGrid, grid[0], gridSpacing);
@@ -147,6 +153,7 @@ public class LocalTreeTransport {
                 maxDistance,
                 gridSpacing,
                 grid,
+                distanceOffsets,
                 logLikelihoodGrid,
                 cdf1GivenD0Grid,
                 cdf0,
@@ -163,18 +170,38 @@ public class LocalTreeTransport {
         return grid;
     }
 
+    private static double[] buildDistanceOffsets(List<Double> taxonHeights) {
+        if (taxonHeights.size() != 3) {
+            throw new IllegalArgumentException("three-taxon transport requires exactly three taxon heights");
+        }
+
+        double[] offsets = new double[2];
+        for (int i = 0; i < offsets.length; i++) {
+            double firstHeight = taxonHeights.get(i);
+            double secondHeight = taxonHeights.get(i + 1);
+
+            if (!Double.isFinite(firstHeight) || !Double.isFinite(secondHeight)) {
+                throw new IllegalArgumentException("taxon heights must be finite");
+            }
+
+            offsets[i] = Math.abs(firstHeight - secondHeight);
+        }
+        return offsets;
+    }
+
     private static double populateLogLikelihoodGrid(
             Approximate3TaxaFelsenstein approximateFelsenstein,
             double[] grid,
+            double[] distanceOffsets,
             double[][] logLikelihoodGrid
     ) {
         double maxLogLikelihood = Double.NEGATIVE_INFINITY;
         double[] distances = new double[2];
 
         for (int i = 0; i < GRID_SIZE; i++) {
-            distances[0] = grid[i];
+            distances[0] = grid[i] + distanceOffsets[0];
             for (int j = 0; j < GRID_SIZE; j++) {
-                distances[1] = grid[j];
+                distances[1] = grid[j] + distanceOffsets[1];
 
                 double logLikelihood = approximateFelsenstein.getApproximateLogFelsenstein(distances);
                 logLikelihoodGrid[i][j] = logLikelihood;
@@ -393,6 +420,29 @@ public class LocalTreeTransport {
         return Math.min(this.maxDistance, Math.max(0.0, distance));
     }
 
+    private double[] shiftDistances(double[] distances) {
+        this.validateDistanceDimension(distances);
+
+        double[] shiftedDistances = new double[distances.length];
+        for (int i = 0; i < distances.length; i++) {
+            shiftedDistances[i] = distances[i] - this.distanceOffsets[i];
+            if (!Double.isFinite(shiftedDistances[i]) || shiftedDistances[i] < 0.0) {
+                throw new IllegalArgumentException("distance must be finite and at least its taxon-height offset");
+            }
+        }
+        return shiftedDistances;
+    }
+
+    public double[] unshiftDistances(double[] shiftedDistances) {
+        this.validateDistanceDimension(shiftedDistances);
+
+        double[] distances = new double[shiftedDistances.length];
+        for (int i = 0; i < shiftedDistances.length; i++) {
+            distances[i] = shiftedDistances[i] + this.distanceOffsets[i];
+        }
+        return distances;
+    }
+
     private double clampProbability(double probability) {
         return Math.min(MAX_CDF_PROBABILITY, Math.max(MIN_CDF_PROBABILITY, probability));
     }
@@ -410,6 +460,7 @@ public class LocalTreeTransport {
             double maxDistance,
             double gridSpacing,
             double[] grid,
+            double[] distanceOffsets,
             double[][] logLikelihoodGrid,
             double[][] cdf1GivenD0Grid,
             double[] cdf0,
