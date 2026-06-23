@@ -12,14 +12,13 @@ import java.util.Map;
 
 public class LocalTreeTransport {
 
-    private static final int GRID_SIZE = 50;
+    private static final int GRID_SIZE = 20;
     private static final int LAST_GRID_INDEX = GRID_SIZE - 1;
     private static final double MIN_GRID_DISTANCE_FRACTION = 1.0 / (2.0 * GRID_SIZE);
     private static final double MIN_CDF_PROBABILITY = 1.0E-15;
     private static final double MAX_CDF_PROBABILITY = 1.0 - MIN_CDF_PROBABILITY;
     private static final double MIN_LOG_DENSITY = 1.0E-300;
     private static final NormalDistribution STANDARD_NORMAL = NormalDistribution.of(0.0, 1.0);
-    private static final Map<GridCacheKey, GridData> GRID_CACHE = new HashMap<>();
 
     private final double maxDistance;
     private final double gridSpacing;
@@ -36,7 +35,7 @@ public class LocalTreeTransport {
             throw new IllegalArgumentException("maxDistance must be finite and positive");
         }
 
-        GridData gridData = this.getOrBuildGridData(taxonIds, alignment, siteModel, clockRate, maxDistance);
+        GridData gridData = buildGridData(taxonIds, siteModel, alignment, clockRate, maxDistance);
 
         this.maxDistance = gridData.maxDistance;
         this.gridSpacing = gridData.gridSpacing;
@@ -122,33 +121,6 @@ public class LocalTreeTransport {
         return this.bilinearInterpolateLogLikelihood(clamped0, clamped1);
     }
 
-    private static synchronized GridData getOrBuildGridData(
-            List<String> taxonIds,
-            Alignment alignment,
-            SiteModelInterface siteModel,
-            RealScalarParam<?> clockRate,
-            double maxDistance
-    ) {
-        GridCacheKey key = new GridCacheKey(
-                taxonIds,
-                System.identityHashCode(alignment),
-                System.identityHashCode(siteModel),
-                getClockRateValue(clockRate)
-        );
-        GridData cached = GRID_CACHE.get(key);
-        if (cached != null && cached.maxDistance >= maxDistance) {
-            return cached;
-        }
-
-        GridData gridData = buildGridData(taxonIds, siteModel, alignment, clockRate, maxDistance);
-        GRID_CACHE.put(key, gridData);
-        return gridData;
-    }
-
-    private static double getClockRateValue(RealScalarParam<?> clockRate) {
-        return clockRate == null ? 1.0 : clockRate.get();
-    }
-
     private static GridData buildGridData(
             List<String> taxonIds,
             SiteModelInterface siteModel,
@@ -156,18 +128,19 @@ public class LocalTreeTransport {
             RealScalarParam<?> clockRate,
             double maxDistance
     ) {
+        Approximate3TaxaFelsenstein approximateFelsenstein = new Approximate3TaxaFelsenstein(taxonIds, alignment, siteModel, clockRate);
+
         double minGridDistance = maxDistance * MIN_GRID_DISTANCE_FRACTION;
         double gridSpacing = (maxDistance - minGridDistance) / LAST_GRID_INDEX;
         double[] grid = buildGrid(minGridDistance, gridSpacing);
-        double[][] logLikelihoodGrid = new double[GRID_SIZE][GRID_SIZE];
-        Approximate3TaxaFelsenstein approximateFelsenstein =
-                new Approximate3TaxaFelsenstein(taxonIds, alignment, siteModel, clockRate);
 
+        double[][] logLikelihoodGrid = new double[GRID_SIZE][GRID_SIZE];
         double maxLogLikelihood = populateLogLikelihoodGrid(approximateFelsenstein, grid, logLikelihoodGrid);
+
         double[][] offsetWeightGrid = buildOffsetWeightGrid(logLikelihoodGrid, maxLogLikelihood);
-        double[][] cdf1GivenD0Grid = buildConditionalCDF1Grid(offsetWeightGrid, gridSpacing);
+        double[][] cdf1GivenD0Grid = buildConditionalCDF1Grid(offsetWeightGrid, grid[0], gridSpacing);
         double[] marginal0 = buildMarginal0(cdf1GivenD0Grid);
-        double[] cdf0 = buildCDF0(marginal0, gridSpacing);
+        double[] cdf0 = buildCDF0(marginal0, grid[0], gridSpacing);
         double totalMass = cdf0[LAST_GRID_INDEX];
 
         return new GridData(
@@ -203,8 +176,10 @@ public class LocalTreeTransport {
             distances[0] = grid[i];
             for (int j = 0; j < GRID_SIZE; j++) {
                 distances[1] = grid[j];
+
                 double logLikelihood = approximateFelsenstein.getApproximateLogFelsenstein(distances);
                 logLikelihoodGrid[i][j] = logLikelihood;
+
                 if (Double.isFinite(logLikelihood)) {
                     maxLogLikelihood = Math.max(maxLogLikelihood, logLikelihood);
                 }
@@ -214,6 +189,7 @@ public class LocalTreeTransport {
         if (!Double.isFinite(maxLogLikelihood)) {
             throw new IllegalArgumentException("grid contains no finite log likelihood values");
         }
+
         return maxLogLikelihood;
     }
 
@@ -232,13 +208,17 @@ public class LocalTreeTransport {
         return weights;
     }
 
-    private static double[][] buildConditionalCDF1Grid(double[][] offsetWeightGrid, double gridSpacing) {
+    private static double[][] buildConditionalCDF1Grid(
+            double[][] offsetWeightGrid,
+            double firstGridDistance,
+            double gridSpacing
+    ) {
         double[][] cdf = new double[GRID_SIZE][GRID_SIZE];
 
         for (int i = 0; i < GRID_SIZE; i++) {
+            cdf[i][0] = trapezoidArea(0.0, offsetWeightGrid[i][0], firstGridDistance);
             for (int j = 1; j < GRID_SIZE; j++) {
-                cdf[i][j] = cdf[i][j - 1]
-                        + trapezoidArea(offsetWeightGrid[i][j - 1], offsetWeightGrid[i][j], gridSpacing);
+                cdf[i][j] = cdf[i][j - 1] + trapezoidArea(offsetWeightGrid[i][j - 1], offsetWeightGrid[i][j], gridSpacing);
             }
         }
 
@@ -253,8 +233,9 @@ public class LocalTreeTransport {
         return marginal;
     }
 
-    private static double[] buildCDF0(double[] marginal0, double gridSpacing) {
+    private static double[] buildCDF0(double[] marginal0, double firstGridDistance, double gridSpacing) {
         double[] cdf = new double[GRID_SIZE];
+        cdf[0] = trapezoidArea(0.0, marginal0[0], firstGridDistance);
         for (int i = 1; i < GRID_SIZE; i++) {
             cdf[i] = cdf[i - 1] + trapezoidArea(marginal0[i - 1], marginal0[i], gridSpacing);
         }
@@ -341,13 +322,23 @@ public class LocalTreeTransport {
     }
 
     private double linearInterpolate(double[] xValues, double[] yValues, double x) {
+        if (x <= xValues[0]) {
+            if (xValues[0] <= 0.0) {
+                return yValues[0];
+            }
+            return this.interpolate(0.0, yValues[0], Math.max(0.0, x / xValues[0]));
+        }
+
         GridPosition position = this.getGridPosition(x);
         return this.interpolate(yValues[position.lowerIndex], yValues[position.upperIndex], position.fraction);
     }
 
     private double inverseMonotone(double[] xValues, double[] yValues, double y) {
         if (y <= yValues[0]) {
-            return xValues[0];
+            if (yValues[0] <= 0.0) {
+                return 0.0;
+            }
+            return this.interpolate(0.0, xValues[0], Math.max(0.0, y / yValues[0]));
         }
         if (y >= yValues[LAST_GRID_INDEX]) {
             return xValues[LAST_GRID_INDEX];
@@ -386,10 +377,6 @@ public class LocalTreeTransport {
         int upperIndex = lowerIndex + 1;
         double fraction = (clamped - this.grid[lowerIndex]) / this.gridSpacing;
         return new GridPosition(lowerIndex, upperIndex, fraction);
-    }
-
-    private double trapezoidArea(double leftHeight, double rightHeight) {
-        return 0.5 * (leftHeight + rightHeight) * this.gridSpacing;
     }
 
     private static double trapezoidArea(double leftHeight, double rightHeight, double gridSpacing) {

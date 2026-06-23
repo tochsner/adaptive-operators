@@ -3,6 +3,8 @@ package transport;
 import beast.base.evolution.alignment.Alignment;
 import beast.base.evolution.alignment.Taxon;
 import beast.base.evolution.alignment.TaxonSet;
+import beast.base.evolution.sitemodel.SiteModelInterface;
+import beast.base.evolution.substitutionmodel.SubstitutionModel;
 import beast.base.spec.domain.PositiveReal;
 import beast.base.spec.inference.parameter.RealScalarParam;
 
@@ -16,15 +18,29 @@ public class Approximate3TaxaFelsenstein {
     private final TaxonSet taxonSet;
     private final int[] alignmentTaxonIndices;
     private final Alignment alignment;
+    private final SiteModelInterface.Base siteModel;
+    private final SubstitutionModel substitutionModel;
     private final RealScalarParam<?> clockRate;
 
-    public Approximate3TaxaFelsenstein(List<String> taxonIds, Alignment alignment, RealScalarParam<?> clockRate) {
+    public Approximate3TaxaFelsenstein(List<String> taxonIds, Alignment alignment, SiteModelInterface siteModel, RealScalarParam<?> clockRate) {
         if (taxonIds.size() != 3) {
             throw new IllegalArgumentException("Approximate3TaxaFelsenstein requires exactly three taxa");
+        }
+        if (!(siteModel instanceof SiteModelInterface.Base)) {
+            throw new IllegalArgumentException("siteModel must be an instance of SiteModelInterface.Base");
         }
 
         this.taxonIds = taxonIds;
         this.alignment = alignment;
+        this.siteModel = (SiteModelInterface.Base) siteModel;
+        this.siteModel.setDataType(alignment.getDataType());
+        this.substitutionModel = this.siteModel.getSubstitutionModel();
+        if (this.substitutionModel == null) {
+            throw new IllegalArgumentException("siteModel must provide a substitution model");
+        }
+        if (!this.siteModel.integrateAcrossCategories()) {
+            throw new IllegalArgumentException("site models with fixed site categories are not supported");
+        }
         this.clockRate = Objects.requireNonNullElse(clockRate, new RealScalarParam<>(1.0, PositiveReal.INSTANCE));
         this.alignmentTaxonIndices = new int[taxonIds.size()];
 
@@ -64,9 +80,15 @@ public class Approximate3TaxaFelsenstein {
     private double getLogLikelihood(String topology, double[] distances) {
         double logLikelihood = 0.0;
         double clockRate = this.clockRate.get();
+        double[] categoryProportions = this.siteModel.getCategoryProportions(null);
 
         for (int pattern = 0; pattern < this.alignment.getPatternCount(); pattern++) {
-            double patternLikelihood = this.getPatternLikelihood(topology, distances, pattern, clockRate);
+            double patternLikelihood = 0.0;
+            for (int category = 0; category < this.siteModel.getCategoryCount(); category++) {
+                patternLikelihood += categoryProportions[category]
+                        * this.getPatternLikelihood(topology, distances, pattern, clockRate, category);
+            }
+
             if (!Double.isFinite(patternLikelihood) || patternLikelihood <= 0.0) {
                 return Double.NEGATIVE_INFINITY;
             }
@@ -77,20 +99,21 @@ public class Approximate3TaxaFelsenstein {
         return logLikelihood;
     }
 
-    private double getPatternLikelihood(String topology, double[] distances, int pattern, double clockRate) {
+    private double getPatternLikelihood(String topology, double[] distances, int pattern, double clockRate, int category) {
         double[] rootPartials;
 
         if (topology.equals("((AB), C)")) {
-            rootPartials = this.getNestedLeftPartials(0, 1, 2, distances[0], distances[1], pattern, clockRate);
+            rootPartials = this.getNestedLeftPartials(0, 1, 2, distances[0], distances[1], pattern, clockRate, category);
         } else if (topology.equals("(A, (BC))")) {
-            rootPartials = this.getNestedRightPartials(0, 1, 2, distances[1], distances[0], pattern, clockRate);
+            rootPartials = this.getNestedRightPartials(0, 1, 2, distances[1], distances[0], pattern, clockRate, category);
         } else {
             throw new IllegalArgumentException("unknown three-taxon topology: " + topology);
         }
 
         double likelihood = 0.0;
-        for (double partial : rootPartials) {
-            likelihood += 0.25 * partial;
+        double[] rootFrequencies = this.substitutionModel.getFrequencies();
+        for (int state = 0; state < rootPartials.length; state++) {
+            likelihood += rootFrequencies[state] * rootPartials[state];
         }
         return likelihood;
     }
@@ -102,7 +125,8 @@ public class Approximate3TaxaFelsenstein {
             double cherryDistance,
             double rootDistance,
             int pattern,
-            double clockRate
+            double clockRate,
+            int category
     ) {
         double cherryHeight = 0.5 * cherryDistance;
         double rootHeight = 0.5 * rootDistance;
@@ -110,12 +134,14 @@ public class Approximate3TaxaFelsenstein {
         double[] cherryPartials = this.combinePartials(
                 this.getLeafPartials(cherryTaxonA, pattern), cherryHeight,
                 this.getLeafPartials(cherryTaxonB, pattern), cherryHeight,
-                clockRate
+                clockRate,
+                category
         );
         return this.combinePartials(
                 cherryPartials, rootHeight - cherryHeight,
                 this.getLeafPartials(sisterTaxon, pattern), rootHeight,
-                clockRate
+                clockRate,
+                category
         );
     }
 
@@ -126,7 +152,8 @@ public class Approximate3TaxaFelsenstein {
             double cherryDistance,
             double rootDistance,
             int pattern,
-            double clockRate
+            double clockRate,
+            int category
     ) {
         double cherryHeight = 0.5 * cherryDistance;
         double rootHeight = 0.5 * rootDistance;
@@ -134,12 +161,14 @@ public class Approximate3TaxaFelsenstein {
         double[] cherryPartials = this.combinePartials(
                 this.getLeafPartials(cherryTaxonA, pattern), cherryHeight,
                 this.getLeafPartials(cherryTaxonB, pattern), cherryHeight,
-                clockRate
+                clockRate,
+                category
         );
         return this.combinePartials(
                 this.getLeafPartials(outgroupTaxon, pattern), rootHeight,
                 cherryPartials, rootHeight - cherryHeight,
-                clockRate
+                clockRate,
+                category
         );
     }
 
@@ -148,18 +177,17 @@ public class Approximate3TaxaFelsenstein {
             double leftBranchLength,
             double[] rightPartials,
             double rightBranchLength,
-            double clockRate
+            double clockRate,
+            int category
     ) {
         int stateCount = leftPartials.length;
         double[] partials = new double[stateCount];
+        double[] leftMatrix = this.getTransitionMatrix(Math.max(0.0, leftBranchLength), clockRate, category);
+        double[] rightMatrix = this.getTransitionMatrix(Math.max(0.0, rightBranchLength), clockRate, category);
 
         for (int state = 0; state < stateCount; state++) {
-            double leftContribution = this.getBranchContribution(
-                    state, leftPartials, Math.max(0.0, leftBranchLength), clockRate
-            );
-            double rightContribution = this.getBranchContribution(
-                    state, rightPartials, Math.max(0.0, rightBranchLength), clockRate
-            );
+            double leftContribution = this.getBranchContribution(state, leftPartials, leftMatrix);
+            double rightContribution = this.getBranchContribution(state, rightPartials, rightMatrix);
             partials[state] = leftContribution * rightContribution;
         }
 
@@ -183,26 +211,27 @@ public class Approximate3TaxaFelsenstein {
         return partials;
     }
 
-    private double getBranchContribution(int parentState, double[] childPartials, double branchLength, double clockRate) {
-        double pSame = this.getJC69SameProbability(branchLength, clockRate);
-        double pDifferent = this.getJC69DifferentProbability(branchLength, clockRate);
-
+    private double getBranchContribution(int parentState, double[] childPartials, double[] transitionMatrix) {
         double contribution = 0.0;
         for (int childState = 0; childState < childPartials.length; childState++) {
-            double transitionProbability = parentState == childState ? pSame : pDifferent;
+            double transitionProbability = transitionMatrix[parentState * childPartials.length + childState];
             contribution += transitionProbability * childPartials[childState];
         }
         return contribution;
     }
 
-    private double getJC69SameProbability(double branchLength, double clockRate) {
-        double transition = Math.exp(-4.0 * clockRate * branchLength / 3.0);
-        return 0.25 + 0.75 * transition;
-    }
-
-    private double getJC69DifferentProbability(double branchLength, double clockRate) {
-        double transition = Math.exp(-4.0 * clockRate * branchLength / 3.0);
-        return 0.25 - 0.25 * transition;
+    private double[] getTransitionMatrix(double branchLength, double clockRate, int category) {
+        int stateCount = this.substitutionModel.getStateCount();
+        double[] transitionMatrix = new double[stateCount * stateCount];
+        double categoryRate = this.siteModel.getRateForCategory(category, null);
+        this.substitutionModel.getTransitionProbabilities(
+                null,
+                branchLength,
+                0.0,
+                categoryRate * clockRate,
+                transitionMatrix
+        );
+        return transitionMatrix;
     }
 
 }
