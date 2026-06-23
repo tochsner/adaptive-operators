@@ -10,7 +10,6 @@ import beast.base.evolution.tree.Tree;
 import beast.base.spec.domain.PositiveReal;
 import beast.base.spec.evolution.tree.ClusterTree;
 import beast.base.spec.inference.parameter.RealScalarParam;
-import beast.base.util.Randomizer;
 
 import java.util.*;
 
@@ -167,13 +166,18 @@ public class ApproximateFelsenstein {
     }
 
     private double getJC69SameProbability(double branchLength, double clockRate) {
-        double transition = Math.exp(-4.0 * clockRate * branchLength / 3.0);
+        double transition = fastExp(-4.0 * clockRate * branchLength / 3.0);
         return 0.25 + 0.75 * transition;
     }
 
     private double getJC69DifferentProbability(double branchLength, double clockRate) {
-        double transition = Math.exp(-4.0 * clockRate * branchLength / 3.0);
+        double transition = fastExp(-4.0 * clockRate * branchLength / 3.0);
         return 0.25 - 0.25 * transition;
+    }
+
+    public static double fastExp(double val) {
+        final long tmp = (long) (1512775 * val + 1072632447);
+        return Double.longBitsToDouble(tmp << 32);
     }
 
 }

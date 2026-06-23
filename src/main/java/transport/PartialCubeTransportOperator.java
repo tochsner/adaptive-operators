@@ -24,8 +24,8 @@ public class PartialCubeTransportOperator extends SliceOperator {
     public final Input<RealScalarParam<?>> clockRateInput = new Input<>("clockRate", "", null, Input.Validate.OPTIONAL);
 
     // number of distances to consider
-    int WINDOW_SIZE = 2;
-    int BURN_IN = 4000;
+    int WINDOW_SIZE = 6;
+    int BURN_IN = 5200;
 
     double scaleFactor = 1.0;
     Random random = new Random();
@@ -62,19 +62,19 @@ public class PartialCubeTransportOperator extends SliceOperator {
 
         // choose window
 
-        int k = 0;
+//        int k = 0;
+//
+//        for (int i = 0; i <= cube.size(); i++) {
+//            int nodeNr = cube.get(i);
+//            Node node = this.tree.getNode(nodeNr);
+//            String taxonId = this.tree.getTaxonId(node);
+//            if (taxonId.equals("CY011616_1_2001.52054795")) {
+//                k = i;
+//                break;
+//            }
+//        }
 
-        for (int i = 0; i <= cube.size(); i++) {
-            int nodeNr = cube.get(i);
-            Node node = this.tree.getNode(nodeNr);
-            String taxonId = this.tree.getTaxonId(node);
-            if (taxonId.equals("CY011616_1_2001.52054795")) {
-                k = i;
-                break;
-            }
-        }
-
-        // int k = Randomizer.nextInt(cube.size() - this.WINDOW_SIZE);
+        int k = Randomizer.nextInt(cube.size() - this.WINDOW_SIZE);
 
         // obtain taxa
 
@@ -104,7 +104,7 @@ public class PartialCubeTransportOperator extends SliceOperator {
         // set up transport
 
         double maxHeight = 4* Arrays.stream(currentState).max().orElseThrow();
-        LocalTreeTransport localTreeTransport = new LocalTreeTransport(
+        Local4TaxaTransport localTreeTransport = new Local4TaxaTransport(
                 taxaIds, taxaHeights, this.alignment, this.siteModel, this.clockRate, maxHeight
         );
 

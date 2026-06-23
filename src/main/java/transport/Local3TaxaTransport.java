@@ -6,11 +6,9 @@ import beast.base.spec.inference.parameter.RealScalarParam;
 import org.apache.commons.statistics.distribution.NormalDistribution;
 
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
-public class LocalTreeTransport {
+public class Local3TaxaTransport {
 
     private static final int GRID_SIZE = 25;
     private static final int LAST_GRID_INDEX = GRID_SIZE - 1;
@@ -31,7 +29,7 @@ public class LocalTreeTransport {
     private final double maxLogLikelihood;
     private final double totalMass;
 
-    public LocalTreeTransport(List<String> taxonIds, List<Double> taxonHeights, Alignment alignment, SiteModelInterface siteModel, RealScalarParam<?> clockRate, double maxDistance) {
+    public Local3TaxaTransport(List<String> taxonIds, List<Double> taxonHeights, Alignment alignment, SiteModelInterface siteModel, RealScalarParam<?> clockRate, double maxDistance) {
         if (!Double.isFinite(maxDistance) || maxDistance <= 0.0) {
             throw new IllegalArgumentException("maxDistance must be finite and positive");
         }
@@ -134,7 +132,7 @@ public class LocalTreeTransport {
             double maxDistance
     ) {
         double[] distanceOffsets = buildDistanceOffsets(taxonHeights);
-        Approximate3TaxaFelsenstein approximateFelsenstein = new Approximate3TaxaFelsenstein(taxonIds, alignment, siteModel, clockRate);
+        Approximate3Plus4TaxaFelsenstein approximateFelsenstein = new Approximate3Plus4TaxaFelsenstein(taxonIds, alignment, siteModel, clockRate);
 
         double minGridDistance = maxDistance * MIN_GRID_DISTANCE_FRACTION;
         double gridSpacing = (maxDistance - minGridDistance) / LAST_GRID_INDEX;
@@ -190,7 +188,7 @@ public class LocalTreeTransport {
     }
 
     private static double populateLogLikelihoodGrid(
-            Approximate3TaxaFelsenstein approximateFelsenstein,
+            Approximate3Plus4TaxaFelsenstein approximateFelsenstein,
             double[] grid,
             double[] distanceOffsets,
             double[][] logLikelihoodGrid
