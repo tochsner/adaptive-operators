@@ -135,6 +135,8 @@ public class ApproximateFelsenstein {
         return partials;
     }
 
+    double[] partials = new double[4];
+
     private double[] getLeafPartials(Node node, int pattern, int stateCount) {
         String taxonId = node.getID();
         int localTaxonIndex = this.taxonIds.indexOf(taxonId);
@@ -146,7 +148,6 @@ public class ApproximateFelsenstein {
         int stateCode = this.alignment.getPattern(alignmentTaxonIndex, pattern);
         boolean[] stateSet = this.alignment.getDataType().getStateSet(stateCode);
 
-        double[] partials = new double[stateCount];
         for (int state = 0; state < stateCount; state++) {
             partials[state] = stateSet[state] ? 1.0 : 0.0;
         }
@@ -166,12 +167,12 @@ public class ApproximateFelsenstein {
     }
 
     private double getJC69SameProbability(double branchLength, double clockRate) {
-        double transition = Math.exp(-4.0 * clockRate * branchLength / 3.0);
+        double transition = fastExp(-4.0 * clockRate * branchLength / 3.0);
         return 0.25 + 0.75 * transition;
     }
 
     private double getJC69DifferentProbability(double branchLength, double clockRate) {
-        double transition = Math.exp(-4.0 * clockRate * branchLength / 3.0);
+        double transition = fastExp(-4.0 * clockRate * branchLength / 3.0);
         return 0.25 - 0.25 * transition;
     }
 

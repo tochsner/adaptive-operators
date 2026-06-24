@@ -25,10 +25,10 @@ public class PartialCubeTransportOperator extends SliceOperator {
 
     // number of distances to consider
     int WINDOW_SIZE = 2;
-    int BURN_IN = 660;
+    int BURN_IN = 900;
 
     double scaleFactor = 1.0;
-    Random random = new Random();
+    Random random = new Random(0);
 
     Tree tree;
     Alignment alignment;
@@ -92,18 +92,26 @@ public class PartialCubeTransportOperator extends SliceOperator {
         // set up transport
 
         double maxHeight = 4* Arrays.stream(currentState).max().orElseThrow();
-        Extended3TaxaTransport localTreeTransport = new Extended3TaxaTransport(
-                taxaIds, taxaHeights, this.alignment, this.siteModel, this.clockRate, maxHeight, currentState.clone()
+        Local3TaxaTransport localTreeTransport = new Local3TaxaTransport(
+                taxaIds, taxaHeights, this.alignment, this.siteModel, this.clockRate, maxHeight
         );
         int extensionSize = (currentState.length - 2) / 2;
         double[] currentCentralState = this.getCentralState(currentState, extensionSize);
 
         // print values
 
-        boolean debug = true;
-        String trees = "";
+        boolean debug = false;
 
         if (debug) {
+            String trees = "";
+
+            System.out.println(465 + " " + tree.getNode(465).getID());
+            System.out.println(432 + " " + tree.getNode(432).getID());
+            System.out.println(677 + " " + tree.getNode(677).getID());
+            System.out.println(827 + " " + tree.getNode(827).getID());
+            System.out.println(682 + " " + tree.getNode(682).getID());
+            System.out.println(961 + " " + tree.getNode(961).getID());
+
             for (int i = 0; i < 100; i++) {
                 double[] shiftedCentralState = new double[2];
                 shiftedCentralState[0] = (i + 1.0) * maxHeight / 100;
@@ -120,12 +128,13 @@ public class PartialCubeTransportOperator extends SliceOperator {
 
                     System.out.println("grid," + centralState[0] + "," + centralState[1] + "," + real + "," + approx);
 
-                    if (i % 33 == 0 && j % 33 == 0) {
+                    if (i == 5 && j == 35 || i == 5 && j == 57) {
                         trees += centralState[0] + "," + centralState[1] + ",full," + this.tree.toString() + "\n";
                         trees += centralState[0] + "," + centralState[1] + ",partial," + localTreeTransport.getTree(centralState).toString() + "\n";
                     }
                 }
             }
+
 
             System.arraycopy(currentCubeDistances, k, currentState, 0, WINDOW_SIZE);
             currentCentralState = this.getCentralState(currentState, extensionSize);
