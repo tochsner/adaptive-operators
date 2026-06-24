@@ -308,6 +308,41 @@ public class TreeUtils {
         throw new RuntimeException("Neighboring subtree not found. This should not happen.");
     }
 
+    public static List<Integer> getAffectedDistances(Node nodeA, Node nodeB, LinkedList<Integer> cube) {
+        Node root = nodeA.getTree().getRoot();
+        Map<Node, Integer> mrcaMap = new HashMap<>();
+        TreeUtils.getMRCAMap(root, cube, mrcaMap);
+
+        MRCA mrca = TreeUtils.getCommonAncestor(nodeA, nodeB);
+
+        List<Node> affectedNodes = new ArrayList<>();
+
+        // we add all nodes on the way to the root
+
+        Node curr = mrca.mrca;
+        while (!curr.isRoot()) {
+            curr = curr.getParent();
+            affectedNodes.add(curr);
+        }
+
+        // we add all nodes on the path between node a and b
+
+        affectedNodes.addAll(mrca.path);
+
+        // get node IDs sorted by distance to MRCA
+
+        affectedNodes = affectedNodes.stream()
+                .sorted(Comparator.comparing(x -> Math.abs(x.getHeight() - mrca.mrca.getHeight())))
+                .filter(x -> !x.isLeaf())
+                .toList();
+
+        // get cube indices
+
+        List<Integer> affectedDistances = affectedNodes.stream().map(mrcaMap::get).toList();
+
+        return affectedDistances;
+    }
+
     private static Set<Integer> getAllNodes(Node root) {
         if (root.isLeaf()) {
             Set<Integer> nodes = new HashSet<>();
@@ -418,6 +453,56 @@ public class TreeUtils {
         }
 
         return isCompatible(root.getLeft(), cube) && isCompatible(root.getRight(), cube);
+    }
+
+    public static Set<Integer> getMRCAMap(Node root, LinkedList<Integer> cube, Map<Node, Integer> mrcaMap) {
+        if (root.isLeaf()) {
+            Set<Integer> nodes = new HashSet<>();
+            nodes.add(root.getNr());
+            return nodes;
+        }
+
+        Set<Integer> leftNodes = getMRCAMap(root.getLeft(), cube, mrcaMap);
+        Set<Integer> rightNodes = getMRCAMap(root.getRight(), cube, mrcaMap);
+
+        Set<Integer> allNodes = new HashSet<>();
+        allNodes.addAll(leftNodes);
+        allNodes.addAll(rightNodes);
+
+        boolean seenLeft = false;
+        boolean seenRight = false;
+
+        for (Integer nodeId : cube) {
+            if (leftNodes.contains(nodeId)) {
+                if (seenRight && rightNodes.isEmpty()) {
+                    mrcaMap.put(root, nodeId);
+                    break ;
+                } else if (seenRight) {
+                    throw new RuntimeException("Incompatible cube detected.");
+                } else {
+                    seenLeft = true;
+                    leftNodes.remove(nodeId);
+                }
+            }
+
+            if (rightNodes.contains(nodeId)) {
+                if (seenLeft && leftNodes.isEmpty()) {
+                    mrcaMap.put(root, nodeId);
+                    break;
+                } else if (seenLeft) {
+                    throw new RuntimeException("Incompatible cube detected.");
+                } else {
+                    seenRight = true;
+                    rightNodes.remove(nodeId);
+                }
+            }
+        }
+
+        if (!mrcaMap.containsKey(root)) {
+            throw new RuntimeException("Incompatible cube detected.");
+        }
+
+        return allNodes;
     }
 
 }

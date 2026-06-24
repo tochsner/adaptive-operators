@@ -2,13 +2,15 @@ package transport;
 
 import beast.base.evolution.alignment.Alignment;
 import beast.base.evolution.sitemodel.SiteModelInterface;
+import beast.base.evolution.tree.Node;
+import beast.base.evolution.tree.Tree;
 import beast.base.spec.inference.parameter.RealScalarParam;
 import org.apache.commons.statistics.distribution.NormalDistribution;
 
 import java.util.Arrays;
 import java.util.List;
 
-public class Local3TaxaTransport {
+public class Extended3TaxaTransport {
 
     private static final int GRID_SIZE = 25;
     private static final int LAST_GRID_INDEX = GRID_SIZE - 1;
@@ -22,39 +24,38 @@ public class Local3TaxaTransport {
     private final double gridSpacing;
     private final double[] grid;
     private final double[] distanceOffsets;
-    private final int firstMutableDistanceIndex;
-    private final int secondMutableDistanceIndex;
-    private final double[] conditioningDistances;
 
     private final double[][] logLikelihoodGrid;
     private final double[][] cdf1GivenD0Grid;
     private final double[] cdf0;
     private final double maxLogLikelihood;
     private final double totalMass;
-    private final ApproximateFelsenstein approximateFelsenstein;
 
-    public Local3TaxaTransport(List<String> taxonIds, List<Double> taxonHeights, Alignment alignment, SiteModelInterface siteModel, RealScalarParam<?> clockRate, double maxDistance) {
-        this(taxonIds, taxonHeights, alignment, siteModel, clockRate, maxDistance, new double[2], new int[] {0, 1});
-    }
+    private final int extensionSize;
+    private final int d1Index;
+    private final int d2Index;
+    private final double[] conditioningDistances;
 
-    public Local3TaxaTransport(
+    ApproximateFelsenstein approximateFelsenstein;
+
+    public Extended3TaxaTransport(
             List<String> taxonIds,
             List<Double> taxonHeights,
             Alignment alignment,
             SiteModelInterface siteModel,
             RealScalarParam<?> clockRate,
             double maxDistance,
-            double[] conditioningDistances,
-            int[] mutableDistanceIndices
+            double[] conditioningDistances
     ) {
         if (!Double.isFinite(maxDistance) || maxDistance <= 0.0) {
             throw new IllegalArgumentException("maxDistance must be finite and positive");
         }
 
-        validateConditioningShape(taxonIds, taxonHeights, conditioningDistances, mutableDistanceIndices);
+        validateConditioningShape(taxonIds, taxonHeights, conditioningDistances);
 
-        this.firstMutableDistanceIndex = mutableDistanceIndices[0];
-        this.secondMutableDistanceIndex = mutableDistanceIndices[1];
+        this.extensionSize = (conditioningDistances.length - 2) / 2;
+        this.d1Index = this.extensionSize;
+        this.d2Index = this.extensionSize + 1;
         this.conditioningDistances = conditioningDistances.clone();
 
         GridData gridData = buildGridData(
@@ -64,8 +65,8 @@ public class Local3TaxaTransport {
                 clockRate,
                 maxDistance,
                 this.conditioningDistances,
-                this.firstMutableDistanceIndex,
-                this.secondMutableDistanceIndex
+                this.d1Index,
+                this.d2Index
         );
 
         this.maxDistance = gridData.maxDistance;
@@ -163,10 +164,10 @@ public class Local3TaxaTransport {
             RealScalarParam<?> clockRate,
             double maxDistance,
             double[] conditioningDistances,
-            int firstMutableDistanceIndex,
-            int secondMutableDistanceIndex
+            int d1Index,
+            int d2Index
     ) {
-        double[] distanceOffsets = buildDistanceOffsets(taxonHeights, firstMutableDistanceIndex, secondMutableDistanceIndex);
+        double[] distanceOffsets = buildDistanceOffsets(taxonHeights, d1Index, d2Index);
         ApproximateFelsenstein approximateFelsenstein = new ApproximateFelsenstein(taxonIds, alignment, clockRate);
 
         double minGridDistance = maxDistance * MIN_GRID_DISTANCE_FRACTION;
@@ -179,8 +180,8 @@ public class Local3TaxaTransport {
                 grid,
                 distanceOffsets,
                 conditioningDistances,
-                firstMutableDistanceIndex,
-                secondMutableDistanceIndex,
+                d1Index,
+                d2Index,
                 logLikelihoodGrid
         );
 
@@ -215,27 +216,19 @@ public class Local3TaxaTransport {
     private static void validateConditioningShape(
             List<String> taxonIds,
             List<Double> taxonHeights,
-            double[] conditioningDistances,
-            int[] mutableDistanceIndices
+            double[] conditioningDistances
     ) {
-        if (mutableDistanceIndices.length != 2) {
-            throw new IllegalArgumentException("grid transport requires exactly two mutable distance indices");
+        if (conditioningDistances.length < 2) {
+            throw new IllegalArgumentException("conditioning distances must contain at least d1 and d2");
+        }
+        if ((conditioningDistances.length - 2) % 2 != 0) {
+            throw new IllegalArgumentException("conditioning distances must have an even number of extension distances");
         }
         if (taxonIds.size() != conditioningDistances.length + 1) {
             throw new IllegalArgumentException("taxonIds size must be one greater than conditioning distance count");
         }
         if (taxonHeights.size() != taxonIds.size()) {
             throw new IllegalArgumentException("taxonHeights size must match taxonIds size");
-        }
-
-        for (int distanceIndex : mutableDistanceIndices) {
-            if (distanceIndex < 0 || distanceIndex >= conditioningDistances.length) {
-                throw new IllegalArgumentException("mutable distance index out of range");
-            }
-        }
-
-        if (mutableDistanceIndices[0] == mutableDistanceIndices[1]) {
-            throw new IllegalArgumentException("mutable distance indices must be distinct");
         }
 
         for (double distance : conditioningDistances) {
@@ -245,11 +238,11 @@ public class Local3TaxaTransport {
         }
     }
 
-    private static double[] buildDistanceOffsets(List<Double> taxonHeights, int firstMutableDistanceIndex, int secondMutableDistanceIndex) {
+    private static double[] buildDistanceOffsets(List<Double> taxonHeights, int d1Index, int d2Index) {
         double[] offsets = new double[2];
-        int[] distanceIndices = {firstMutableDistanceIndex, secondMutableDistanceIndex};
+        int[] distanceIndices = {d1Index, d2Index};
 
-        for (int i = 0; i < offsets.length; i++) {
+        for (int i = 0; i < distanceIndices.length; i++) {
             double firstHeight = taxonHeights.get(distanceIndices[i]);
             double secondHeight = taxonHeights.get(distanceIndices[i] + 1);
 
@@ -267,8 +260,8 @@ public class Local3TaxaTransport {
             double[] grid,
             double[] distanceOffsets,
             double[] conditioningDistances,
-            int firstMutableDistanceIndex,
-            int secondMutableDistanceIndex,
+            int d1Index,
+            int d2Index,
             double[][] logLikelihoodGrid
     ) {
         double maxLogLikelihood = Double.NEGATIVE_INFINITY;
@@ -276,8 +269,8 @@ public class Local3TaxaTransport {
         for (int i = 0; i < GRID_SIZE; i++) {
             for (int j = 0; j < GRID_SIZE; j++) {
                 double[] distances = conditioningDistances.clone();
-                distances[firstMutableDistanceIndex] = grid[i] + distanceOffsets[0];
-                distances[secondMutableDistanceIndex] = grid[j] + distanceOffsets[1];
+                distances[d1Index] = grid[i] + distanceOffsets[0];
+                distances[d2Index] = grid[j] + distanceOffsets[1];
 
                 double logLikelihood = approximateFelsenstein.getApproximateLogFelsenstein(distances);
                 logLikelihoodGrid[i][j] = logLikelihood;
@@ -519,16 +512,6 @@ public class Local3TaxaTransport {
         return distances;
     }
 
-    public beast.base.evolution.tree.Tree getTree(double[] mutableDistances) {
-        this.validateDistanceDimension(mutableDistances);
-
-        double[] distances = this.conditioningDistances.clone();
-        distances[this.firstMutableDistanceIndex] = mutableDistances[0];
-        distances[this.secondMutableDistanceIndex] = mutableDistances[1];
-
-        return this.approximateFelsenstein.buildTree(distances);
-    }
-
     private double clampProbability(double probability) {
         return Math.min(MAX_CDF_PROBABILITY, Math.max(MIN_CDF_PROBABILITY, probability));
     }
@@ -537,6 +520,14 @@ public class Local3TaxaTransport {
         if (distances.length != 2) {
             throw new IllegalArgumentException("grid transport requires exactly two distance dimensions");
         }
+    }
+
+    public Tree getTree(double[] centralState) {
+        double[] distances = conditioningDistances.clone();
+        distances[d1Index] = centralState[0] + distanceOffsets[0];
+        distances[d2Index] = centralState[1] + distanceOffsets[1];
+
+        return this.approximateFelsenstein.buildTree(distances);
     }
 
     private record GridPosition(int lowerIndex, int upperIndex, double fraction) {
