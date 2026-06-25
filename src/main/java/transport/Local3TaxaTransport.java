@@ -33,8 +33,8 @@ public class Local3TaxaTransport {
     private final double totalMass;
     private final ApproximateFelsenstein approximateFelsenstein;
 
-    public Local3TaxaTransport(List<String> taxonIds, List<Double> taxonHeights, Alignment alignment, SiteModelInterface siteModel, RealScalarParam<?> clockRate, double maxDistance) {
-        this(taxonIds, taxonHeights, alignment, siteModel, clockRate, maxDistance, new double[2], new int[] {0, 1});
+    public Local3TaxaTransport(List<String> taxonIds, List<Double> taxonHeights, Alignment alignment, SiteModelInterface siteModel, RealScalarParam<?> clockRate, double maxDistance, double temperature) {
+        this(taxonIds, taxonHeights, alignment, siteModel, clockRate, maxDistance, new double[2], new int[] {0, 1}, temperature);
     }
 
     public Local3TaxaTransport(
@@ -45,7 +45,8 @@ public class Local3TaxaTransport {
             RealScalarParam<?> clockRate,
             double maxDistance,
             double[] conditioningDistances,
-            int[] mutableDistanceIndices
+            int[] mutableDistanceIndices,
+            double temperature
     ) {
         if (!Double.isFinite(maxDistance) || maxDistance <= 0.0) {
             throw new IllegalArgumentException("maxDistance must be finite and positive");
@@ -65,7 +66,8 @@ public class Local3TaxaTransport {
                 maxDistance,
                 this.conditioningDistances,
                 this.firstMutableDistanceIndex,
-                this.secondMutableDistanceIndex
+                this.secondMutableDistanceIndex,
+                temperature
         );
 
         this.maxDistance = gridData.maxDistance;
@@ -109,15 +111,6 @@ public class Local3TaxaTransport {
         return this.unshiftDistances(distances);
     }
 
-    public double getTransportCorrection(
-            double[] currentDistances, double[] newDistances, double[] currentTransportedState, double[] newTransportedState
-    ) {
-        return this.felsensteinLogPDF(currentDistances)
-                - this.felsensteinLogPDF(newDistances)
-                - this.gaussianLogPDF(currentTransportedState)
-                + this.gaussianLogPDF(newTransportedState);
-    }
-
     private double invGaussianCDF(double o) {
         double probability = Math.min(MAX_CDF_PROBABILITY, Math.max(MIN_CDF_PROBABILITY, o));
         return STANDARD_NORMAL.inverseCumulativeProbability(probability);
@@ -127,7 +120,7 @@ public class Local3TaxaTransport {
         return STANDARD_NORMAL.cumulativeProbability(o);
     }
 
-    private double gaussianLogPDF(double[] transportedState) {
+    public double gaussianLogPDF(double[] transportedState) {
         double logPDF = 0.0;
         for (double value : transportedState) {
             logPDF += STANDARD_NORMAL.logDensity(value);
@@ -164,10 +157,11 @@ public class Local3TaxaTransport {
             double maxDistance,
             double[] conditioningDistances,
             int firstMutableDistanceIndex,
-            int secondMutableDistanceIndex
+            int secondMutableDistanceIndex,
+            double temperature
     ) {
         double[] distanceOffsets = buildDistanceOffsets(taxonHeights, firstMutableDistanceIndex, secondMutableDistanceIndex);
-        ApproximateFelsenstein approximateFelsenstein = new ApproximateFelsenstein(taxonIds, alignment, clockRate, 1.0);
+        ApproximateFelsenstein approximateFelsenstein = new ApproximateFelsenstein(taxonIds, alignment, clockRate, temperature);
 
         double minGridDistance = maxDistance * MIN_GRID_DISTANCE_FRACTION;
         double gridSpacing = (maxDistance - minGridDistance) / LAST_GRID_INDEX;
