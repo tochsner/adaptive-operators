@@ -10,7 +10,7 @@ import java.util.List;
 
 public class Local3TaxaTransport {
 
-    private static final int GRID_SIZE = 20;
+    private static final int GRID_SIZE = 10;
     private static final int LAST_GRID_INDEX = GRID_SIZE - 1;
     private static final double MIN_GRID_DISTANCE_FRACTION = 1.0 / (2.0 * GRID_SIZE);
     private static final double MIN_CDF_PROBABILITY = 1.0E-15;

@@ -9,7 +9,6 @@ import beast.base.evolution.distance.Distance;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import beast.base.spec.domain.PositiveReal;
-import beast.base.spec.evolution.alignment.FilteredAlignment;
 import beast.base.spec.evolution.tree.ClusterTree;
 import beast.base.spec.inference.parameter.RealScalarParam;
 
@@ -36,8 +35,8 @@ public class ApproximateFelsenstein {
         }
 
         List<Sequence> sequences = new ArrayList<>();
-
         List<Taxon> taxa = new ArrayList<>();
+
         for (String taxonId : taxonIds) {
             taxa.add(new Taxon(taxonId));
             Sequence sequence = alignment.sequenceInput.get().get(
@@ -137,8 +136,6 @@ public class ApproximateFelsenstein {
         return partials;
     }
 
-    double[] partials = new double[4];
-
     private double[] getLeafPartials(Node node, int pattern, int stateCount) {
         String taxonId = node.getID();
         int localTaxonIndex = this.taxonIds.indexOf(taxonId);
@@ -150,6 +147,7 @@ public class ApproximateFelsenstein {
         int stateCode = this.filteredAlignment.getPattern(alignmentTaxonIndex, pattern);
         boolean[] stateSet = this.filteredAlignment.getDataType().getStateSet(stateCode);
 
+        double[] partials = new double[stateCount];
         for (int state = 0; state < stateCount; state++) {
             partials[state] = stateSet[state] ? 1.0 : 0.0;
         }
