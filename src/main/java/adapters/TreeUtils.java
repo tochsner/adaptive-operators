@@ -36,7 +36,7 @@ public class TreeUtils {
         return new MRCA(mrca, path);
     }
 
-    public static double getDistance(Node nodeA, Node nodeB, Tree tree) {
+    public static double getDistance(Node nodeA, Node nodeB) {
         Node mrca = TreeUtils.getCommonAncestor(nodeA, nodeB).mrca();
         return 2.0 * mrca.getHeight() - nodeA.getHeight() - nodeB.getHeight();
     }
@@ -503,6 +503,180 @@ public class TreeUtils {
         }
 
         return allNodes;
+    }
+
+    public static void reattachNode(Node node, double distanceTo1, Node reference1, Node reference2) {
+        if (node.isRoot()) {
+            throw new IllegalArgumentException("Cannot reattach the root node");
+        }
+
+        if (TreeUtils.containsNode(node, reference1) || TreeUtils.containsNode(node, reference2)) {
+            throw new IllegalArgumentException("Reference nodes must not be inside the subtree being reattached");
+        }
+
+        MRCA initialMrca = TreeUtils.getCommonAncestor(reference1, reference2);
+        double initialDistanceToMrcaFrom1 = initialMrca.mrca().getHeight() - reference1.getHeight();
+        double initialDistanceToMrcaFrom2 = initialMrca.mrca().getHeight() - reference2.getHeight();
+        double initialReferenceDistance = initialDistanceToMrcaFrom1 + initialDistanceToMrcaFrom2;
+
+        if (distanceTo1 >= initialReferenceDistance) {
+            throw new IllegalArgumentException("distanceTo1 must be smaller than the distance between the references");
+        }
+
+        double initialAttachmentHeight = getAttachmentHeight(
+                reference1,
+                reference2,
+                initialMrca.mrca(),
+                initialReferenceDistance,
+                distanceTo1
+        );
+
+        if (initialAttachmentHeight < node.getHeight()) {
+            throw new IllegalArgumentException("Cannot attach node below its current height");
+        }
+
+        Node attachmentParent = node.getParent();
+        Node sibling = TreeUtils.getOtherChild(attachmentParent, node);
+        Node oldGrandParent = attachmentParent.getParent();
+
+        if (oldGrandParent == null) {
+            sibling.setParent(null);
+            if (node.getTree() != null) {
+                node.getTree().setRootOnly(sibling);
+            }
+        } else {
+            TreeUtils.replace(oldGrandParent, attachmentParent, sibling);
+        }
+
+        attachmentParent.removeChild(node);
+        attachmentParent.removeChild(sibling);
+        attachmentParent.setParent(null);
+        node.setParent(null);
+
+        MRCA mrca = TreeUtils.getCommonAncestor(reference1, reference2);
+        double distanceToMrcaFrom1 = mrca.mrca().getHeight() - reference1.getHeight();
+        double distanceToMrcaFrom2 = mrca.mrca().getHeight() - reference2.getHeight();
+        double referenceDistance = distanceToMrcaFrom1 + distanceToMrcaFrom2;
+
+        AttachmentPoint attachmentPoint = getAttachmentPoint(
+                reference1,
+                reference2,
+                mrca.mrca(),
+                referenceDistance,
+                distanceTo1
+        );
+
+        attachmentParent.setHeight(attachmentPoint.height());
+
+        if (attachmentPoint.parent() == null) {
+            attachmentParent.addChild(node);
+            attachmentParent.addChild(attachmentPoint.child());
+            attachmentParent.setParent(null);
+            if (node.getTree() != null) {
+                node.getTree().setRootOnly(attachmentParent);
+            }
+        } else {
+            TreeUtils.replace(attachmentPoint.parent(), attachmentPoint.child(), attachmentParent);
+            attachmentParent.addChild(node);
+            attachmentParent.addChild(attachmentPoint.child());
+        }
+
+        TreeUtils.markFilthy(node);
+        TreeUtils.markFilthy(sibling);
+        TreeUtils.markFilthy(attachmentParent);
+        TreeUtils.markFilthy(attachmentPoint.child());
+        TreeUtils.markFilthyToRoot(oldGrandParent == null ? sibling : oldGrandParent);
+        TreeUtils.markFilthyToRoot(attachmentPoint.parent() == null ? attachmentParent : attachmentPoint.parent());
+    }
+
+    private record AttachmentPoint(Node child, Node parent, double height) {};
+
+    private static AttachmentPoint getAttachmentPoint(
+            Node reference1,
+            Node reference2,
+            Node mrca,
+            double referenceDistance,
+            double distanceTo1
+    ) {
+        double distanceToMrcaFrom1 = mrca.getHeight() - reference1.getHeight();
+
+        if (distanceTo1 <= distanceToMrcaFrom1) {
+            return getAttachmentPointAbove(reference1, getAttachmentHeight(
+                    reference1,
+                    reference2,
+                    mrca,
+                    referenceDistance,
+                    distanceTo1
+            ));
+        }
+
+        return getAttachmentPointAbove(reference2, getAttachmentHeight(
+                reference1,
+                reference2,
+                mrca,
+                referenceDistance,
+                distanceTo1
+        ));
+    }
+
+    private static double getAttachmentHeight(
+            Node reference1,
+            Node reference2,
+            Node mrca,
+            double referenceDistance,
+            double distanceTo1
+    ) {
+        double distanceToMrcaFrom1 = mrca.getHeight() - reference1.getHeight();
+
+        if (distanceTo1 <= distanceToMrcaFrom1) {
+            return reference1.getHeight() + distanceTo1;
+        }
+
+        double distanceTo2 = referenceDistance - distanceTo1;
+        return reference2.getHeight() + distanceTo2;
+    }
+
+    private static AttachmentPoint getAttachmentPointAbove(Node node, double targetHeight) {
+        Node child = node;
+        Node parent = child.getParent();
+
+        while (parent != null && parent.getHeight() < targetHeight) {
+            child = parent;
+            parent = child.getParent();
+        }
+
+        if (child.getHeight() > targetHeight) {
+            throw new IllegalArgumentException("Attachment height is below the target branch");
+        }
+
+        return new AttachmentPoint(child, parent, targetHeight);
+    }
+
+    public static boolean containsNode(Node root, Node query) {
+        if (root == query) {
+            return true;
+        }
+
+        for (Node child : root.getChildren()) {
+            if (TreeUtils.containsNode(child, query)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static void markFilthy(Node node) {
+        if (node != null) {
+            node.makeDirty(Tree.IS_FILTHY);
+        }
+    }
+
+    private static void markFilthyToRoot(Node node) {
+        while (node != null) {
+            node.makeDirty(Tree.IS_FILTHY);
+            node = node.getParent();
+        }
     }
 
 }

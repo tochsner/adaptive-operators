@@ -23,6 +23,7 @@ import transforms.SimplexTransform;
 import transforms.IntSimplexRoundTransform;
 import transforms.SimplexRoundTransform;
 import transport.PartialCubeTransportOperator;
+import transport.NodeTransportOperator;
 import slice.StepOutShrinkSliceOperator;
 import slice.LinCombSliceOperator;
 import slice.MultivariateStepOutShrinkSliceOperator;
@@ -86,6 +87,7 @@ open module adaptiveoperators {
             JumpMCMC,
             NodePositionAdapter,
             MLMCMC,
+            NodeTransportOperator,
             UnifiedLargeJumpMALAOperator,
             ApproximateDelayedAcceptanceMCMC,
             DelayedAcceptanceMCMC,

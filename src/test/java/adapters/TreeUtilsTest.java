@@ -15,6 +15,7 @@ import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.within;
 
 class TreeUtilsTest {
@@ -159,6 +160,37 @@ class TreeUtilsTest {
         assertThat(distance(nodeA, nodeB)).isCloseTo(6.0, within(1e-12));
         assertThat(tree.getRoot().toNewick()).isEqualTo("((A:2.0,C:2.0):1.0,B:3.0):0.0");
         assertTreeIsConnected(tree.getRoot(), "A", "B", "C");
+    }
+
+    @Test
+    void reattachNodeMovesNodeToReferencePath() {
+        TreeParser tree = parseTree("((A:1.0,B:1.0):2.0,(C:1.0,D:1.0):2.0):0.0;");
+        Node nodeA = findLeaf(tree.getRoot(), "A");
+        Node nodeC = findLeaf(tree.getRoot(), "C");
+        Node nodeD = findLeaf(tree.getRoot(), "D");
+
+        TreeUtils.reattachNode(nodeD, 1.5, nodeA, nodeC);
+
+        assertThat(nodeD.getParent().getHeight()).isCloseTo(1.5, within(1e-12));
+        assertThat(TreeUtils.getCommonAncestor(nodeA, nodeD).mrca()).isSameAs(nodeD.getParent());
+        assertThat(tree.getRoot().toNewick()).isEqualTo("(C:3.0,(D:1.5,(A:1.0,B:1.0):0.5):1.5):0.0");
+        assertTreeIsConnected(tree.getRoot(), "A", "B", "C", "D");
+    }
+
+    @Test
+    void reattachNodeRejectsDistanceOutsideReferencePathWithoutChangingTree() {
+        TreeParser tree = parseTree("((A:1.0,B:1.0):2.0,(C:1.0,D:1.0):2.0):0.0;");
+        Node nodeA = findLeaf(tree.getRoot(), "A");
+        Node nodeC = findLeaf(tree.getRoot(), "C");
+        Node nodeD = findLeaf(tree.getRoot(), "D");
+        String originalTree = tree.getRoot().toNewick();
+
+        assertThatThrownBy(() -> TreeUtils.reattachNode(nodeD, 6.0, nodeA, nodeC))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("distanceTo1");
+
+        assertThat(tree.getRoot().toNewick()).isEqualTo(originalTree);
+        assertTreeIsConnected(tree.getRoot(), "A", "B", "C", "D");
     }
 
     @ParameterizedTest(name = "{0}, seed={1}")
