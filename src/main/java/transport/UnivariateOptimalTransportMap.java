@@ -1,10 +1,13 @@
 package transport;
 
 import beast.base.util.Randomizer;
+import org.apache.commons.math4.legacy.analysis.interpolation.AkimaSplineInterpolator;
 import org.apache.commons.math4.legacy.analysis.interpolation.LinearInterpolator;
 import org.apache.commons.math4.legacy.analysis.polynomials.PolynomialSplineFunction;
 
 import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.function.Function;
 
 public class UnivariateOptimalTransportMap {
@@ -24,7 +27,7 @@ public class UnivariateOptimalTransportMap {
     private final double[] cumulativeMass;
     private final double totalMass;
 
-    public UnivariateOptimalTransportMap(double min, double max, Function<Double, Double> getLogDensity) {
+    public UnivariateOptimalTransportMap(double min, double max, Set<Double> pathHeights, Function<Double, Double> getLogDensity) {
         if (!Double.isFinite(max) || max <= min) {
             throw new IllegalArgumentException("max must be finite and greater than min");
         }
@@ -39,11 +42,11 @@ public class UnivariateOptimalTransportMap {
             throw new IllegalArgumentException("transport interval is too small");
         }
 
-        this.grid = getChebyshevGrid(this.supportMin, this.supportMax);
-        double[] logDensities = new double[GRID_SIZE];
+        this.grid = getUniformGrid(this.supportMin, this.supportMax, pathHeights);
+        double[] logDensities = new double[this.grid.length];
         double maxLogDensity = Double.NEGATIVE_INFINITY;
 
-        for (int i = 0; i < GRID_SIZE; i++) {
+        for (int i = 0; i < this.grid.length; i++) {
             logDensities[i] = getLogDensity.apply(this.grid[i]);
 
             if (!Double.isFinite(logDensities[i])) {
@@ -197,17 +200,16 @@ public class UnivariateOptimalTransportMap {
         return Math.max(0, Math.min(-index - 2, grid.length - 2));
     }
 
-    private static double[] getChebyshevGrid(double min, double max) {
-        double[] grid = new double[GRID_SIZE];
-        double midpoint = 0.5 * (min + max);
-        double halfWidth = 0.5 * (max - min);
+    private static double[] getUniformGrid(double min, double max, Set<Double> additionalHeights) {
+        Set<Double> grid = new HashSet<>();
+        double spacing = (max - min) / (GRID_SIZE - 1);
 
         for (int i = 0; i < GRID_SIZE; i++) {
-            int reverseIndex = GRID_SIZE - 1 - i;
-            double angle = reverseIndex * Math.PI / (GRID_SIZE - 1);
-            grid[i] = midpoint + halfWidth * Math.cos(angle);
+            grid.add(min + i * spacing);
         }
 
-        return grid;
+        grid.addAll(additionalHeights);
+
+        return grid.stream().sorted(Double::compareTo).mapToDouble(x -> x).toArray();
     }
 }

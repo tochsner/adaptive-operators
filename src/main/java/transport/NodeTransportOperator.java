@@ -12,6 +12,7 @@ import slice.SliceOperator;
 
 import java.util.*;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 public class NodeTransportOperator extends SliceOperator {
 
@@ -87,8 +88,9 @@ public class NodeTransportOperator extends SliceOperator {
 
         // set up optimal transport
 
+        Set<Double> pathHeights = this.getPathHeights(reference1, reference2, node);
         UnivariateOptimalTransportMap transportMap = new UnivariateOptimalTransportMap(
-                minAttachmentDistance, maxAttachmentDistance, height -> {
+                minAttachmentDistance, maxAttachmentDistance, pathHeights, height -> {
                     TreeUtils.reattachNode(selectedNode, height, selectedReference1, selectedReference2);
                     return computeCurrentLogLikelihood.get();
                 }
@@ -119,6 +121,19 @@ public class NodeTransportOperator extends SliceOperator {
         TreeUtils.reattachNode(selectedNode, sampledDistance, selectedReference1, selectedReference2);
 
         return transportMap.logHRCorrection(currentDistance, sampledDistance);
+    }
+
+    private Set<Double> getPathHeights(Node reference1, Node reference2, Node node) {
+        TreeUtils.MRCA mrca = TreeUtils.getCommonAncestor(reference1, reference2);
+        Set<Node> path = mrca.path();
+        path.remove(reference1);
+        path.remove(reference2);
+        path.remove(TreeUtils.getCommonAncestor(reference1, node).mrca());
+        path.add(mrca.mrca());
+        return path.stream()
+                .filter(x -> node.getHeight() < x.getHeight())
+                .map(x -> TreeUtils.getDistance(reference1, x))
+                .collect(Collectors.toSet());
     }
 
     @Override

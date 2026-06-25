@@ -9,7 +9,7 @@ class UnivariateOptimalTransportMapTest {
 
     @Test
     void samplesInsideOpenIntervalWithoutEvaluatingEndpoints() {
-        UnivariateOptimalTransportMap map = new UnivariateOptimalTransportMap(0, 1.0, x -> {
+        UnivariateOptimalTransportMap map = new UnivariateOptimalTransportMap(0, 1.0, pathHeights, x -> {
             if (x <= 0.0 || x >= 1.0) {
                 throw new AssertionError("density evaluated at endpoint");
             }
@@ -26,7 +26,7 @@ class UnivariateOptimalTransportMapTest {
 
     @Test
     void logHRCorrectionReturnsReverseMinusForwardProposalDensity() {
-        UnivariateOptimalTransportMap map = new UnivariateOptimalTransportMap(0, 1.0, x -> -x);
+        UnivariateOptimalTransportMap map = new UnivariateOptimalTransportMap(0, 1.0, pathHeights, x -> -x);
 
         assertThat(map.logHRCorrection(0.25, 0.75)).isCloseTo(0.5, within(1e-12));
     }

@@ -24,6 +24,7 @@ import transforms.IntSimplexRoundTransform;
 import transforms.SimplexRoundTransform;
 import transport.PartialCubeTransportOperator;
 import transport.NodeTransportOperator;
+import transport.GuidedNodeTransportOperator;
 import slice.StepOutShrinkSliceOperator;
 import slice.LinCombSliceOperator;
 import slice.MultivariateStepOutShrinkSliceOperator;
@@ -77,6 +78,7 @@ open module adaptiveoperators {
             GuidedRandomWalkOperator,
             MALAOperator,
             LinCombSliceOperator,
+            GuidedNodeTransportOperator,
             CubeMAPGuidedMALAOperator,
             FisherMALAOperator,
             LargeJumpMALAOperator,
