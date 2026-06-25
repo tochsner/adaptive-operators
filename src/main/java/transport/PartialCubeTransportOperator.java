@@ -22,11 +22,11 @@ public class PartialCubeTransportOperator extends SliceOperator {
     public final Input<Alignment> alignmentInput = new Input<>("alignment", "");
     final public Input<SiteModelInterface> siteModelInput = new Input<>("siteModel", "site model for leafs in the beast.tree");
     public final Input<RealScalarParam<?>> clockRateInput = new Input<>("clockRate", "", null, Input.Validate.OPTIONAL);
-    public final Input<Boolean> gibbsInput = new Input<>("gibbs", "", false, Input.Validate.OPTIONAL);
+    public final Input<Boolean> gibbsInput = new Input<>("gibbs", "", true, Input.Validate.OPTIONAL);
 
     // number of distances to consider
     int WINDOW_SIZE = 2;
-    int BURN_IN = 500;
+    int BURN_IN = 2000;
 
     double scaleFactor = 1.0;
     Random random = new Random(0);
@@ -96,12 +96,12 @@ public class PartialCubeTransportOperator extends SliceOperator {
 
         double maxHeight = 4* Arrays.stream(currentState).max().orElseThrow();
         Local3TaxaTransport localTreeTransport = new Local3TaxaTransport(
-                taxaIds, taxaHeights, this.alignment, this.siteModel, this.clockRate, maxHeight, 1.0 / this.scaleFactor
+                taxaIds, taxaHeights, this.alignment, this.siteModel, this.clockRate, maxHeight,  this.gibbs ? this.scaleFactor : 1.0
         );
 
         // print values
 
-        boolean debug = true;
+        boolean debug = false;
 
         if (debug) {
             String trees = "";
@@ -134,21 +134,24 @@ public class PartialCubeTransportOperator extends SliceOperator {
                 }
             }
 
-//            System.arraycopy(currentCubeDistances, k, currentState, 0, WINDOW_SIZE);
-//            currentCentralState = this.getCentralState(currentState, extensionSize);
-//            System.out.println("current," + currentCentralState[0] + "," + currentCentralState[1] + "," + currentCentralState[0] + "," + currentCentralState[1]);
-//
-//            for (int m = 0; m < 1000; m++) {
-//                double[] currentTransportedState = localTreeTransport.transport(currentCentralState);
-//
-//                double[] newTransportedState = new double[currentTransportedState.length];
-//                for (int i = 0; i < newTransportedState.length; i++) {
-//                    newTransportedState[i] = currentTransportedState[i] + Randomizer.nextGaussian();
-//                }
-//
-//                double[] newState = localTreeTransport.transportBack(newTransportedState);
-//                System.out.println("new," + newState[0] + "," + newState[1] + "," + newTransportedState[0] + "," + newTransportedState[1]);
-//            }
+            System.arraycopy(currentCubeDistances, k, currentState, 0, WINDOW_SIZE);
+            System.out.println("current," + currentState[0] + "," + currentState[1] + "," + currentState[0] + "," + currentState[1]);
+
+            for (int m = 0; m < 1000; m++) {
+                double[] currentTransportedState = localTreeTransport.transport(currentState);
+
+                double[] newTransportedState = new double[currentTransportedState.length];
+                for (int i = 0; i < newTransportedState.length; i++) {
+                    if (this.gibbs) {
+                        newTransportedState[i] = Randomizer.nextGaussian();
+                    } else {
+                        newTransportedState[i] = currentTransportedState[i] + Randomizer.nextGaussian() * this.scaleFactor;
+                    }
+                }
+
+                double[] newState = localTreeTransport.transportBack(newTransportedState);
+                System.out.println("new," + newState[0] + "," + newState[1] + "," + newTransportedState[0] + "," + newTransportedState[1]);
+            }
 
             System.out.println(trees);
 
@@ -218,11 +221,11 @@ public class PartialCubeTransportOperator extends SliceOperator {
             Local3TaxaTransport localTreeTransport, double[] currentDistances, double[] newDistances, double[] currentTransportedState, double[] newTransportedState
     ) {
         if (this.gibbs) {
-            return localTreeTransport.felsensteinLogPDF(currentDistances)
-                    - localTreeTransport.felsensteinLogPDF(newDistances);
+            return localTreeTransport.sampledLogPDF(currentDistances)
+                    - localTreeTransport.sampledLogPDF(newDistances);
         } else {
-            return localTreeTransport.felsensteinLogPDF(currentDistances)
-                    - localTreeTransport.felsensteinLogPDF(newDistances)
+            return localTreeTransport.sampledLogPDF(currentDistances)
+                    - localTreeTransport.sampledLogPDF(newDistances)
                     - localTreeTransport.gaussianLogPDF(currentTransportedState)
                     + localTreeTransport.gaussianLogPDF(newTransportedState);
         }
@@ -248,7 +251,7 @@ public class PartialCubeTransportOperator extends SliceOperator {
 
         double delta = this.calcDelta(logAlpha);
         delta += Math.log(this.scaleFactor);
-        this.scaleFactor = Math.exp(delta);
+        // this.scaleFactor = Math.exp(delta);
     }
 
     @Override

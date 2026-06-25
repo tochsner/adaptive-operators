@@ -10,7 +10,7 @@ import java.util.List;
 
 public class Local3TaxaTransport {
 
-    private static final int GRID_SIZE = 10;
+    private static final int GRID_SIZE = 20;
     private static final int LAST_GRID_INDEX = GRID_SIZE - 1;
     private static final double MIN_GRID_DISTANCE_FRACTION = 1.0 / (2.0 * GRID_SIZE);
     private static final double MIN_CDF_PROBABILITY = 1.0E-15;
@@ -147,6 +147,23 @@ public class Local3TaxaTransport {
         double clamped0 = this.clampDistance(shiftedDistances[0]);
         double clamped1 = this.clampDistance(shiftedDistances[1]);
         return this.bilinearInterpolateLogLikelihood(clamped0, clamped1);
+    }
+
+    public double sampledLogPDF(double[] distances) {
+        this.validateDistanceDimension(distances);
+
+        double[] shiftedDistances = this.shiftDistances(distances);
+        double clamped0 = this.clampDistance(shiftedDistances[0]);
+        double clamped1 = this.clampDistance(shiftedDistances[1]);
+        double marginalDensity0 = this.evaluateCDFSegmentDensity(this.cdf0, clamped0) / this.totalMass;
+        double conditionalDensity1 = this.evaluateConditionalCDFSegmentDensity(clamped0, clamped1);
+        double jointDensity = marginalDensity0 * conditionalDensity1;
+
+        if (!Double.isFinite(jointDensity) || jointDensity <= 0.0) {
+            return Math.log(MIN_LOG_DENSITY);
+        }
+
+        return Math.log(jointDensity);
     }
 
     private static GridData buildGridData(
@@ -415,6 +432,53 @@ public class Local3TaxaTransport {
             return logLikelihood;
         }
         return this.maxLogLikelihood + Math.log(MIN_LOG_DENSITY);
+    }
+
+    private double evaluateConditionalCDFSegmentDensity(double distance0, double distance1) {
+        GridPosition position0 = this.getGridPosition(distance0);
+        double[] conditionalCDF = new double[GRID_SIZE];
+
+        for (int j = 0; j < GRID_SIZE; j++) {
+            conditionalCDF[j] = this.interpolate(
+                    this.cdf1GivenD0Grid[position0.lowerIndex][j],
+                    this.cdf1GivenD0Grid[position0.upperIndex][j],
+                    position0.fraction
+            );
+        }
+
+        double totalConditionalMass = conditionalCDF[LAST_GRID_INDEX];
+        if (totalConditionalMass <= 0.0) {
+            return 0.0;
+        }
+
+        return this.evaluateCDFSegmentDensity(conditionalCDF, distance1) / totalConditionalMass;
+    }
+
+    private double evaluateCDFSegmentDensity(double[] cdf, double distance) {
+        double clamped = this.clampDistance(distance);
+
+        if (clamped <= this.grid[0]) {
+            if (this.grid[0] <= 0.0) {
+                return 0.0;
+            }
+            return cdf[0] / this.grid[0];
+        }
+
+        GridPosition position = this.getGridPosition(clamped);
+        int lowerIndex = position.lowerIndex;
+        int upperIndex = position.upperIndex;
+
+        if (lowerIndex == upperIndex) {
+            lowerIndex = LAST_GRID_INDEX - 1;
+            upperIndex = LAST_GRID_INDEX;
+        }
+
+        double mass = cdf[upperIndex] - cdf[lowerIndex];
+        if (mass <= 0.0) {
+            return 0.0;
+        }
+
+        return mass / (this.grid[upperIndex] - this.grid[lowerIndex]);
     }
 
     private double linearInterpolate(double[] xValues, double[] yValues, double x) {
