@@ -2,12 +2,14 @@ package transport;
 
 import adapters.TreeUtils;
 import beast.base.evolution.alignment.Alignment;
+import beast.base.evolution.alignment.Sequence;
 import beast.base.evolution.alignment.Taxon;
 import beast.base.evolution.alignment.TaxonSet;
 import beast.base.evolution.distance.Distance;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import beast.base.spec.domain.PositiveReal;
+import beast.base.spec.evolution.alignment.FilteredAlignment;
 import beast.base.spec.evolution.tree.ClusterTree;
 import beast.base.spec.inference.parameter.RealScalarParam;
 
@@ -17,34 +19,34 @@ public class ApproximateFelsenstein {
 
     private final List<String> taxonIds;
     private final TaxonSet taxonSet;
+    private final double temperature;
     private Tree tree;
-    private final int[] alignmentTaxonIndices;
     LinkedList<Integer> cube;
-    Alignment alignment;
+    Alignment filteredAlignment;
     RealScalarParam<?> clockRate;
 
-    public ApproximateFelsenstein(List<String> taxonIds, Alignment alignment, RealScalarParam<?> clockRate) {
+    public ApproximateFelsenstein(List<String> taxonIds, Alignment alignment, RealScalarParam<?> clockRate, double temperature) {
         this.taxonIds = taxonIds;
-        this.alignment = alignment;
         this.clockRate = Objects.requireNonNullElse(clockRate, new RealScalarParam<>(1.0, PositiveReal.INSTANCE));
-        this.alignmentTaxonIndices = new int[taxonIds.size()];
+        this.temperature = temperature;
 
         this.cube = new LinkedList<>();
         for (int i = 0; i < this.taxonIds.size(); i++) {
             cube.add(i);
         }
 
-        List<Taxon> taxa = new ArrayList<>();
-        for (int i = 0; i < taxonIds.size(); i++) {
-            String taxonId = taxonIds.get(i);
-            taxa.add(new Taxon(taxonId));
+        List<Sequence> sequences = new ArrayList<>();
 
-            int taxonIndex = this.alignment.getTaxonIndex(taxonId);
-            if (taxonIndex < 0) {
-                throw new IllegalArgumentException("taxon " + taxonId + " not found in alignment");
-            }
-            this.alignmentTaxonIndices[i] = taxonIndex;
+        List<Taxon> taxa = new ArrayList<>();
+        for (String taxonId : taxonIds) {
+            taxa.add(new Taxon(taxonId));
+            Sequence sequence = alignment.sequenceInput.get().get(
+                    alignment.getTaxaNames().indexOf(taxonId)
+            );
+            sequences.add(sequence);
         }
+
+        this.filteredAlignment = new Alignment(sequences, alignment.getDataType().getTypeDescription());
 
         this.taxonSet = new TaxonSet();
         this.taxonSet.taxonsetInput.setTypedValue(taxa, this.taxonSet);
@@ -56,16 +58,16 @@ public class ApproximateFelsenstein {
         double clockRate = this.clockRate.get();
 
         double logLikelihood = 0.0;
-        for (int pattern = 0; pattern < this.alignment.getPatternCount(); pattern++) {
+        for (int pattern = 0; pattern < this.filteredAlignment.getPatternCount(); pattern++) {
             double patternLikelihood = this.getPatternLikelihood(tree.getRoot(), pattern, clockRate);
             if (!Double.isFinite(patternLikelihood) || patternLikelihood <= 0.0) {
                 return 0.0;
             }
 
-            logLikelihood += Math.log(patternLikelihood) * this.alignment.getPatternWeight(pattern);
+            logLikelihood += Math.log(patternLikelihood) * this.filteredAlignment.getPatternWeight(pattern);
         }
 
-        return logLikelihood;
+        return this.temperature*logLikelihood;
     }
 
     public Tree buildTree(double[] distances) {
@@ -113,7 +115,7 @@ public class ApproximateFelsenstein {
     }
 
     private double[] getPartials(Node node, int pattern, double clockRate) {
-        int stateCount = this.alignment.getDataType().getStateCount();
+        int stateCount = this.filteredAlignment.getDataType().getStateCount();
 
         if (node.isLeaf()) {
             return this.getLeafPartials(node, pattern, stateCount);
@@ -144,9 +146,9 @@ public class ApproximateFelsenstein {
             throw new IllegalArgumentException("taxon " + taxonId + " not found in local taxa");
         }
 
-        int alignmentTaxonIndex = this.alignmentTaxonIndices[localTaxonIndex];
-        int stateCode = this.alignment.getPattern(alignmentTaxonIndex, pattern);
-        boolean[] stateSet = this.alignment.getDataType().getStateSet(stateCode);
+        int alignmentTaxonIndex = this.filteredAlignment.getTaxonIndex(taxonId);
+        int stateCode = this.filteredAlignment.getPattern(alignmentTaxonIndex, pattern);
+        boolean[] stateSet = this.filteredAlignment.getDataType().getStateSet(stateCode);
 
         for (int state = 0; state < stateCount; state++) {
             partials[state] = stateSet[state] ? 1.0 : 0.0;

@@ -168,7 +168,7 @@ public class Extended3TaxaTransport {
             int d2Index
     ) {
         double[] distanceOffsets = buildDistanceOffsets(taxonHeights, d1Index, d2Index);
-        ApproximateFelsenstein approximateFelsenstein = new ApproximateFelsenstein(taxonIds, alignment, clockRate);
+        ApproximateFelsenstein approximateFelsenstein = new ApproximateFelsenstein(taxonIds, alignment, clockRate, 1.0);
 
         double minGridDistance = maxDistance * MIN_GRID_DISTANCE_FRACTION;
         double gridSpacing = (maxDistance - minGridDistance) / LAST_GRID_INDEX;
