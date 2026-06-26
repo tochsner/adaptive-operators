@@ -1,7 +1,6 @@
 package transport;
 
 import beast.base.util.Randomizer;
-import org.apache.commons.math4.legacy.analysis.interpolation.AkimaSplineInterpolator;
 import org.apache.commons.math4.legacy.analysis.interpolation.LinearInterpolator;
 import org.apache.commons.math4.legacy.analysis.polynomials.PolynomialSplineFunction;
 
@@ -20,8 +19,7 @@ public class UnivariateOptimalTransportMap {
     private final double max;
     private final double supportMin;
     private final double supportMax;
-    private final double support;
-    private final PolynomialSplineFunction logDensitySpline;
+    private final PolynomialSplineFunction shiftedLogDensitySpline;
     private final double[] grid;
     private final double[] shiftedLogDensities;
     private final double[] cumulativeMass;
@@ -37,12 +35,11 @@ public class UnivariateOptimalTransportMap {
         double edgeOffset = Math.max(Math.ulp(this.max), (this.max - this.min) * EDGE_FRACTION);
         this.supportMin = this.min + edgeOffset;
         this.supportMax = this.max - edgeOffset;
-        this.support = this.supportMax - this.supportMin;
         if (this.supportMin >= this.supportMax) {
             throw new IllegalArgumentException("transport interval is too small");
         }
 
-        this.grid = getUniformGrid(this.supportMin, this.supportMax, pathHeights);
+        this.grid = getChebyshevGrid(this.supportMin, this.supportMax, pathHeights);
         double[] logDensities = new double[this.grid.length];
         double maxLogDensity = Double.NEGATIVE_INFINITY;
 
@@ -60,8 +57,8 @@ public class UnivariateOptimalTransportMap {
             throw new IllegalArgumentException("log density must be finite for at least one grid point");
         }
 
-        this.logDensitySpline = new LinearInterpolator().interpolate(this.grid, logDensities);
         this.shiftedLogDensities = getShiftedLogDensities(logDensities, maxLogDensity);
+        this.shiftedLogDensitySpline = new LinearInterpolator().interpolate(this.grid, this.shiftedLogDensities);
         this.cumulativeMass = getCumulativeMass(this.grid, this.shiftedLogDensities);
         this.totalMass = this.cumulativeMass[this.cumulativeMass.length - 1];
 
@@ -85,45 +82,23 @@ public class UnivariateOptimalTransportMap {
     }
 
     public double logHRCorrection(double oldValue, double newValue) {
+        if (!this.isInsideSamplingSupport(oldValue) || !this.isInsideSamplingSupport(newValue)) {
+            return Double.NEGATIVE_INFINITY;
+        }
+
         return this.logDensity(oldValue) - this.logDensity(newValue);
     }
 
-    private double cdf(double value) {
-        if (value <= this.supportMin) {
-            return 0.0;
-        }
-
-        if (value >= this.supportMax) {
-            return 1.0;
-        }
-
-        int interval = getIntervalForValue(this.grid, value);
-        double intervalMass = getIntervalMass(
-                this.grid[interval],
-                value,
-                this.shiftedLogDensities[interval],
-                interpolateShiftedLogDensity(interval, value)
-        );
-        double cumulativeMass = this.cumulativeMass[interval] + intervalMass;
-
-        return Math.min(1.0, Math.max(0.0, cumulativeMass / this.totalMass));
+    public boolean isInsideSamplingSupport(double value) {
+        return value >= this.supportMin && value <= this.supportMax;
     }
 
     public double logDensity(double value) {
-        if (value < this.min || value > this.max) {
-            throw new IllegalArgumentException("value must be inside the transport interval");
+        if (!this.isInsideSamplingSupport(value)) {
+            throw new IllegalArgumentException("value must be inside the sampling support");
         }
 
-        double clampedValue = Math.min(this.supportMax - this.support * 1e-5, Math.max(this.supportMin + this.support * 1e-5, value));
-        return this.logDensitySpline.value(clampedValue);
-    }
-
-    private double interpolateShiftedLogDensity(int interval, double value) {
-        double left = this.grid[interval];
-        double right = this.grid[interval + 1];
-        double fraction = (value - left) / (right - left);
-        return this.shiftedLogDensities[interval]
-                + fraction * (this.shiftedLogDensities[interval + 1] - this.shiftedLogDensities[interval]);
+        return this.shiftedLogDensitySpline.value(value) - Math.log(this.totalMass);
     }
 
     private static double[] getShiftedLogDensities(double[] logDensities, double shift) {
@@ -191,24 +166,32 @@ public class UnivariateOptimalTransportMap {
         return Math.max(0, Math.min(-index - 2, cumulativeMass.length - 2));
     }
 
-    private static int getIntervalForValue(double[] grid, double value) {
-        int index = Arrays.binarySearch(grid, value);
-        if (index >= 0) {
-            return Math.min(index, grid.length - 2);
-        }
-
-        return Math.max(0, Math.min(-index - 2, grid.length - 2));
-    }
-
-    private static double[] getUniformGrid(double min, double max, Set<Double> additionalHeights) {
+    private static double[] getChebyshevGrid(double min, double max, Set<Double> additionalHeights) {
         Set<Double> grid = new HashSet<>();
-        double spacing = (max - min) / (GRID_SIZE - 1);
 
-        for (int i = 0; i < GRID_SIZE; i++) {
-            grid.add(min + i * spacing);
+        double midpoint = 0.5 * (min + max);
+        double halfWidth = 0.5 * (max - min);
+
+        int additionalHeightCount = 0;
+        for (double height : additionalHeights) {
+            if (height > min && height < max) {
+                additionalHeightCount++;
+            }
         }
 
-        grid.addAll(additionalHeights);
+        int gridSize = Math.max(2, GRID_SIZE - additionalHeightCount);
+
+        for (int i = 0; i < gridSize; i++) {
+            int reverseIndex = gridSize - 1 - i;
+            double angle = reverseIndex * Math.PI / (gridSize - 1);
+            grid.add(midpoint + halfWidth * Math.cos(angle));
+        }
+
+        for (double height : additionalHeights) {
+            if (height > min && height < max) {
+                grid.add(height);
+            }
+        }
 
         return grid.stream().sorted(Double::compareTo).mapToDouble(x -> x).toArray();
     }

@@ -95,6 +95,9 @@ public class NodeTransportOperator extends SliceOperator {
                     return computeCurrentLogLikelihood.get();
                 }
         );
+        if (!transportMap.isInsideSamplingSupport(currentDistance)) {
+            return Double.NEGATIVE_INFINITY;
+        }
 
         if (debug) {
             int max = 100;

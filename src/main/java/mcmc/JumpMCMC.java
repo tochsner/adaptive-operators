@@ -1,5 +1,6 @@
 package mcmc;
 
+import beast.base.inference.CompoundDistribution;
 import beast.base.inference.MCMC;
 import beast.base.inference.Operator;
 import beast.base.util.Randomizer;
@@ -47,7 +48,7 @@ public class JumpMCMC extends MCMC {
         // (which restore() still needs to be correct)
         Supplier<Double> computeCurrentLogLikelihood = () -> {
             state.checkCalculationNodesDirtiness();
-            return posterior.calculateLogP();
+            return ((CompoundDistribution) posterior).pDistributions.get().get(1).calculateLogP();
         };
 
         final double logHastingsRatio = sliceOperator.proposal(computeCurrentLogLikelihood, this.state);
