@@ -3,7 +3,6 @@ package transport;
 import adapters.TreeUtils;
 import beast.base.core.Input;
 import beast.base.evolution.alignment.Alignment;
-import beast.base.evolution.distance.JukesCantorDistance;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import beast.base.inference.State;
@@ -32,7 +31,7 @@ public class GuidedNodeTransportOperator extends SliceOperator {
     Tree tree;
     Alignment alignment;
     private boolean debug = false;
-    JukesCantorDistance distance;
+    FastJCDistance distance;
     WeightingScheme weightingScheme;
 
     @Override
@@ -40,7 +39,7 @@ public class GuidedNodeTransportOperator extends SliceOperator {
         this.tree = this.treeInput.get();
         this.alignment = this.alignmentInput.get();
 
-        this.distance = new JukesCantorDistance();
+        this.distance = new FastJCDistance();
         this.distance.setPatterns(this.alignment);
         this.weightingScheme = WeightingScheme.fromName(this.weightingSchemeInput.get());
     }
