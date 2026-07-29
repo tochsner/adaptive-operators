@@ -2,10 +2,11 @@
 
 This README summarizes the operator approaches implemented in this package:
 
-- [Adapter-Based State Proposals](#adapter-based-state-proposals)
+- [Adapters](#adapters)
 - [Learned Conditional Proposals](#learned-conditional-proposals)
 - [Learned Tree-Distance Proposals](#learned-tree-distance-proposals)
 - [Slice-Based Proposals](#slice-based-proposals)
+- [Transport-Based Proposals](#transport-based-proposals)
 - [Gradient and MALA Proposals](#gradient-and-mala-proposals)
 - [Large-Jump and Mode-Jump Proposals](#large-jump-and-mode-jump-proposals)
 - [Preconditioned Crank-Nicolson Proposals](#preconditioned-crank-nicolson-proposals)
@@ -13,9 +14,9 @@ This README summarizes the operator approaches implemented in this package:
 - [Delayed-Acceptance and ML-Assisted Runs](#delayed-acceptance-and-ml-assisted-runs)
 - [Adaptive Operator Weighting and Scheduling](#adaptive-operator-weighting-and-scheduling)
 
-## Adapter-Based State Proposals
+## Adapters
 
-Many custom operators are built around an adapter layer. Adapters expose parts of the BEAST state as mutable and immutable vectors, often after a transform, so generic proposal machinery can work on scalar parameters, simplex parameters, tree heights, local tree geometry, or MAP/cube summaries.
+Many custom operators are built around an adapter layer, which exposes parts of the BEAST state as mutable and immutable vectors, often after a transform, so generic proposal machinery can work on scalar parameters, simplex parameters, tree heights, local tree geometry, or MAP/cube summaries.
 
 Relevant classes:
 
@@ -37,7 +38,7 @@ Relevant transform classes:
 
 ## Learned Conditional Proposals
 
-The adaptive operator learns a conditional proposal distribution from observed mutable and immutable adapter vectors. After burn-in and training, it samples new mutable values conditional on the current immutable state.
+The adaptive operator learns a conditional proposal distribution from observed mutable and immutable adapter vectors, then, after burn-in and training, samples new mutable values conditional on the current immutable state.
 
 Relevant classes:
 
@@ -74,9 +75,23 @@ Relevant classes:
 - [`slice.LinCombSliceOperator`](src/main/java/slice/LinCombSliceOperator.java)
 - [`mcmc.SliceMCMC`](src/main/java/mcmc/SliceMCMC.java)
 
+## Transport-Based Proposals
+
+Tree-topology cube parameterizations can be multi-modal, which makes local moves inefficient. The transport operators look at two reference taxa and a subtree on the path between the references. It then approximates the posterior slice for all the possible (continuous) attachment points of the subtree and builds a triangular (Knothe-Rosenblatt) transport map that sends this approximation to a standard Gaussian. A move perturbs the Gaussian-space point, transports it back to distance space, and computes an exact log Hastings-ratio correction from the map's Jacobian. See [`transport/approach.md`](src/main/java/transport/approach.md) for details.
+
+- `NodeTransportOperator` reattaches a subtree by resampling its attachment point along the path between two reference leaves.
+- `GuidedNodeTransportOperator` picks reference leaves and a subtree node via sequence-distance-weighted triplet selection, then resamples its attachment point in the same way.
+
+Relevant classes:
+
+- [`transport.NodeTransportOperator`](src/main/java/transport/NodeTransportOperator.java)
+- [`transport.GuidedNodeTransportOperator`](src/main/java/transport/GuidedNodeTransportOperator.java)
+- [`transport.PartialCubeTransportOperator`](src/main/java/transport/PartialCubeTransportOperator.java)
+- [`transport.UnivariateOptimalTransportMap`](src/main/java/transport/UnivariateOptimalTransportMap.java)
+
 ## Gradient and MALA Proposals
 
-The MALA family proposes adapter vectors using approximate-gradient-guided proposals. `MALAOperator` learns either a neural-network or Gaussian approximation to the gradient during a training phase, then uses a learned covariance for preconditioned proposals. `FisherMALAOperator` adds Fisher-style preconditioning and adaptive step-size behavior. The MAP-guided variants use MAP/cube summaries to guide moves.
+The MALA family proposes adapter vectors using approximate-gradient-guided proposals. `MALAOperator` learns a neural-network or Gaussian approximation to the gradient during a training phase, then uses a learned covariance for preconditioned proposals. `FisherMALAOperator` adds Fisher-style preconditioning and adaptive step-size behavior, and the MAP-guided variants use MAP/cube summaries to guide moves.
 
 Relevant classes:
 
@@ -88,7 +103,7 @@ Relevant classes:
 
 ## Large-Jump and Mode-Jump Proposals
 
-Large-jump operators separate jump coordinates from optimization coordinates. A proposal first makes a large move in one adapter group, performs local random-walk optimization in another group, adds covariance-scaled noise, and computes the reverse construction for the Hastings correction. The unified variant also supports MAP jump candidates and transport noise controls.
+Large-jump operators separate jump coordinates from optimization coordinates: a proposal first makes a large move in one adapter group, performs local random-walk optimization in another group, adds covariance-scaled noise, and computes the reverse construction for the Hastings correction. The unified variant also supports MAP jump candidates and transport noise controls.
 
 Relevant classes:
 
