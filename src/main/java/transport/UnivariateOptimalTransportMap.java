@@ -11,7 +11,7 @@ import java.util.function.Function;
 
 public class UnivariateOptimalTransportMap {
 
-    private static final int GRID_SIZE = 16;
+    private static final int GRID_SIZE = 8;
     private static final double MIN_DENSITY = 1.0E-300;
     private static final double EDGE_FRACTION = 1.0E-2;
 
@@ -188,7 +188,7 @@ public class UnivariateOptimalTransportMap {
         }
 
         for (double height : additionalHeights) {
-            if (height > min && height < max) {
+            if (height > min && height < max && Randomizer.nextDouble() <= (1.0 * GRID_SIZE / additionalHeightCount)) {
                 grid.add(height);
             }
         }

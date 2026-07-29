@@ -580,13 +580,6 @@ public class TreeUtils {
             attachmentParent.addChild(node);
             attachmentParent.addChild(attachmentPoint.child());
         }
-
-        TreeUtils.markFilthy(node);
-        TreeUtils.markFilthy(sibling);
-        TreeUtils.markFilthy(attachmentParent);
-        TreeUtils.markFilthy(attachmentPoint.child());
-        TreeUtils.markFilthyToRoot(oldGrandParent == null ? sibling : oldGrandParent);
-        TreeUtils.markFilthyToRoot(attachmentPoint.parent() == null ? attachmentParent : attachmentPoint.parent());
     }
 
     private record AttachmentPoint(Node child, Node parent, double height) {};
@@ -664,19 +657,6 @@ public class TreeUtils {
         }
 
         return false;
-    }
-
-    private static void markFilthy(Node node) {
-        if (node != null) {
-            node.makeDirty(Tree.IS_FILTHY);
-        }
-    }
-
-    private static void markFilthyToRoot(Node node) {
-        while (node != null) {
-            node.makeDirty(Tree.IS_FILTHY);
-            node = node.getParent();
-        }
     }
 
 }

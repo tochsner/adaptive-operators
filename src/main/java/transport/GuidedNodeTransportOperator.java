@@ -20,11 +20,9 @@ public class GuidedNodeTransportOperator extends SliceOperator {
 
     public Input<Tree> treeInput = new Input<>("tree", "");
     public final Input<Alignment> alignmentInput = new Input<>("alignment", "");
-    public final Input<String> weightingSchemeInput = new Input<>(
-            "weightingScheme",
-            "taxon weighting scheme: inverse, inverse_sqrt, or explorative_inverse_sqrt",
-            "inverse"
+    public final Input<String> weightingSchemeInput = new Input<>("weightingScheme", "", "inverse"
     );
+    private static final double MIN_DISTANCE = 1.0E-12;
 
     int BURN_IN = 0;
 
@@ -62,11 +60,11 @@ public class GuidedNodeTransportOperator extends SliceOperator {
         int referenceId1 = Randomizer.nextInt(this.tree.getLeafNodeCount());
         Node reference1 = this.tree.getNode(referenceId1);
 
-        // select the second reference in a weighted manner and such that it is not the direct sibling
+        // select the second reference such that it is not the direct sibling
 
         Node reference2 = this.sampleReference2(reference1);
 
-        // select the node to move on the path between the two references
+        // select the node to move on the path between the two references in a weighted manner
 
         Node node = this.sampleNodeToMove(reference1, reference2);
 
@@ -89,9 +87,11 @@ public class GuidedNodeTransportOperator extends SliceOperator {
         UnivariateOptimalTransportMap transportMap = new UnivariateOptimalTransportMap(
                 minAttachmentDistance, maxAttachmentDistance, pathHeights, height -> {
                     TreeUtils.reattachNode(node, height, reference1, reference2);
+                    Tree t = tree.copy();
                     return computeCurrentLogLikelihood.get();
                 }
         );
+
         if (!transportMap.isInsideSamplingSupport(currentDistance)) {
             return Double.NEGATIVE_INFINITY;
         }
@@ -131,51 +131,60 @@ public class GuidedNodeTransportOperator extends SliceOperator {
     }
 
     private Node sampleReference2(Node reference1) {
-        List<Node> candidates = new ArrayList<>();
-        List<Double> weights = new ArrayList<>();
-
-        for (int nodeId = 0; nodeId < this.tree.getLeafNodeCount(); nodeId++) {
-            Node candidate = this.tree.getNode(nodeId);
-
-            if (reference1.getParent() == candidate.getParent()) {
-                continue;
-            }
-
-            double distanceToReference = this.distance.pairwiseDistance(reference1.getNr(), nodeId);
-            candidates.add(candidate);
-            weights.add(this.getWeight(reference1, candidate, distanceToReference));
-        }
-
-        int index = this.sampleWeightedIndex(weights);
-        return candidates.get(index);
+        List<Node> candidates = this.getReference2Candidates(reference1);
+        return candidates.get(Randomizer.nextInt(candidates.size()));
     }
 
     private Node sampleNodeToMove(Node reference1, Node reference2) {
-        Set<Node> path = TreeUtils.getCommonAncestor(reference1, reference2).path();
+        List<Node> candidates = this.getNodeToMoveCandidates(reference1, reference2);
+        List<Double> weights = new ArrayList<>();
 
-        List<Node> candidates = new ArrayList<>();
-        for (Node parent : path) {
-            if (parent.isLeaf()) continue;
-
-            Node left = parent.getLeft();
-            if (!TreeUtils.containsNode(left, reference1) && !TreeUtils.containsNode(left, reference2)) {
-                candidates.add(left);
-            }
-
-            Node right = parent.getRight();
-            if (!TreeUtils.containsNode(right, reference1) && !TreeUtils.containsNode(right, reference2)) {
-                candidates.add(right);
-            }
+        for (Node candidate : candidates) {
+            double weight = this.getWeight(reference1, reference2, candidate);
+            weights.add(weight);
         }
 
-        return candidates.get(Randomizer.nextInt(candidates.size()));
+        int candidateIdx = this.sampleWeightedIndex(weights);
+        return candidates.get(candidateIdx);
     }
 
     private double getTripletLogProbability(Node reference1, Node reference2, Node node) {
         // compute probability for reference 2
 
-        double reference2Weight = 0.0;
+        List<Node> reference2Candidates = this.getReference2Candidates(reference1);
+        if (!reference2Candidates.contains(reference2)) {
+            throw new IllegalArgumentException("reference2 not amongst the candidates for it.");
+        }
+
+        double logReference2Probability = Math.log(1.0 / reference2Candidates.size());
+
+        // compute probability for node
+
+        List<Node> nodeCandidates = this.getNodeToMoveCandidates(reference1, reference2);
+
         double cumWeight = 0.0;
+        double nodeWeight = Double.NEGATIVE_INFINITY;
+
+        for (Node nodeCandidate : nodeCandidates) {
+            double weight = this.getWeight(reference1, reference2, nodeCandidate);
+            cumWeight += weight;
+
+            if (nodeCandidate == node) {
+                nodeWeight = weight;
+            }
+        }
+
+        if (nodeWeight == Double.NEGATIVE_INFINITY) {
+            throw new IllegalArgumentException("Node not amongst the candidates for it.");
+        }
+
+        double logNodeProbability = Math.log(nodeWeight / cumWeight);
+
+        return logReference2Probability + logNodeProbability;
+    }
+
+    private List<Node> getReference2Candidates(Node reference1) {
+        List<Node> candidates = new ArrayList<>();
 
         for (int nodeId = 0; nodeId < this.tree.getLeafNodeCount(); nodeId++) {
             Node candidate = this.tree.getNode(nodeId);
@@ -184,22 +193,13 @@ public class GuidedNodeTransportOperator extends SliceOperator {
                 continue;
             }
 
-            double distanceToReference = this.distance.pairwiseDistance(reference1.getNr(), nodeId);
-            double weight = this.getWeight(reference1, candidate, distanceToReference);
-
-            if (candidate == reference2) reference2Weight = weight;
-            cumWeight += weight;
-
+            candidates.add(candidate);
         }
 
-        if (reference2Weight == 0.0) {
-            throw new IllegalArgumentException("Reference 2 not amongst the candidates for it.");
-        }
+        return candidates;
+    }
 
-        double logReference2Probability = Math.log(reference2Weight / cumWeight);
-
-        // compute probability for node
-
+    private List<Node> getNodeToMoveCandidates(Node reference1, Node reference2) {
         Set<Node> path = TreeUtils.getCommonAncestor(reference1, reference2).path();
 
         List<Node> candidates = new ArrayList<>();
@@ -217,40 +217,52 @@ public class GuidedNodeTransportOperator extends SliceOperator {
             }
         }
 
-        if (!candidates.contains(node)) {
-            throw new IllegalArgumentException("Node not amongst the candidates for it.");
-        }
-
-        double logNodeProbability = Math.log(1.0 / candidates.size());
-
-        return logReference2Probability + logNodeProbability;
+        return candidates;
     }
 
+    private double getWeight(Node reference1, Node reference2, Node nodeToMove) {
+        double distance1 = this.getMeanTaxaDistance(reference1, nodeToMove);
+        double distance2 = this.getMeanTaxaDistance(reference2, nodeToMove);
 
-    private Set<Double> getPathHeights(Node reference1, Node reference2, Node node, Node movingAttachmentParent) {
-        TreeUtils.MRCA mrca = TreeUtils.getCommonAncestor(reference1, reference2);
-        Set<Node> path = mrca.path();
-        path.remove(reference1);
-        path.remove(reference2);
-        path.remove(movingAttachmentParent);
-        path.add(mrca.mrca());
-        return path.stream()
-                .filter(x -> node.getHeight() < x.getHeight())
-                .map(x -> TreeUtils.getDistance(reference1, x))
-                .collect(Collectors.toSet());
-    }
+        double sumDistance = distance1 + distance2;
+        double referenceDistance = this.distance.pairwiseDistance(reference1.getNr(), reference2.getNr());
+        double tension = referenceDistance / Math.max(MIN_DISTANCE, sumDistance);
+        double angleDenominator = Math.max(MIN_DISTANCE, 2.0 * distance1 * distance2);
+        double cosAngle = (distance1 * distance1 + distance2 * distance2 - referenceDistance * referenceDistance)
+                / angleDenominator;
+        double angle = Math.acos(Math.max(-1.0, Math.min(1.0, cosAngle)));
+        double sequencePosition = distance1 / Math.max(MIN_DISTANCE, sumDistance);
+        double treePosition = TreeUtils.getDistance(reference1, nodeToMove.getParent())
+                / Math.max(MIN_DISTANCE, TreeUtils.getDistance(reference1, reference2));
+        double displacement = Math.abs(sequencePosition - treePosition);
 
-    private double getWeight(Node reference, Node candidate, double sequenceDistance) {
         return switch (this.weightingScheme) {
             case UNIFORM -> 1.0;
-            case INVERSE -> 1.0 / sequenceDistance;
-            case INVERSE_SQUARE -> 1.0 / (sequenceDistance * sequenceDistance);
-            case INVERSE_SQRT -> 1.0 / Math.sqrt(sequenceDistance);
-            case EXPLORATIVE_INVERSE_SQRT -> {
-                double treeDistance = Math.max(TreeUtils.getDistance(reference, candidate), 1e-12);
-                yield Math.pow(treeDistance, 0.2) / sequenceDistance;
-            }
+            case PROP -> sumDistance;
+            case DISPLACEMENT -> MIN_DISTANCE + displacement;
+            case TENSION -> MIN_DISTANCE + tension;
+            case ANGLE -> MIN_DISTANCE + angle;
+            case INVERSE -> 1.0 / sumDistance;
+            case INVERSE_SQUARE -> 1.0 / (sumDistance * sumDistance);
+            case INVERSE_SQRT -> 1.0 / Math.sqrt(sumDistance);
         };
+    }
+
+    private double getMeanTaxaDistance(Node reference, Node subtree) {
+        double distanceSum = 0.0;
+        int count = 0;
+
+        for (Node leaf : subtree.getAllLeafNodes()) {
+            distanceSum += this.distance.pairwiseDistance(reference.getNr(), leaf.getNr());
+            count++;
+        }
+
+        if (subtree.isLeaf()) {
+            count = 1;
+            distanceSum = this.distance.pairwiseDistance(reference.getNr(), subtree.getNr());
+        }
+
+        return distanceSum / count;
     }
 
     private int sampleWeightedIndex(List<Double> weights) {
@@ -273,10 +285,13 @@ public class GuidedNodeTransportOperator extends SliceOperator {
 
     private enum WeightingScheme {
         UNIFORM,
+        PROP,
+        DISPLACEMENT,
+        TENSION,
+        ANGLE,
         INVERSE,
         INVERSE_SQRT,
-        INVERSE_SQUARE,
-        EXPLORATIVE_INVERSE_SQRT;
+        INVERSE_SQUARE;
 
         private static WeightingScheme fromName(String name) {
             try {
@@ -285,6 +300,19 @@ public class GuidedNodeTransportOperator extends SliceOperator {
                 throw new IllegalArgumentException("Unknown weightingScheme '" + name, exception);
             }
         }
+    }
+
+    private Set<Double> getPathHeights(Node reference1, Node reference2, Node node, Node movingAttachmentParent) {
+        TreeUtils.MRCA mrca = TreeUtils.getCommonAncestor(reference1, reference2);
+        Set<Node> path = mrca.path();
+        path.remove(reference1);
+        path.remove(reference2);
+        path.remove(movingAttachmentParent);
+        path.add(mrca.mrca());
+        return path.stream()
+                .filter(x -> node.getHeight() < x.getHeight())
+                .map(x -> TreeUtils.getDistance(reference1, x))
+                .collect(Collectors.toSet());
     }
 
     @Override

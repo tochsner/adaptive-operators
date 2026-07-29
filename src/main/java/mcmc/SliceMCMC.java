@@ -19,7 +19,7 @@ public class SliceMCMC extends MCMC {
                 state.checkCalculationNodesDirtiness();
             }
 
-            return ((CompoundDistribution) posterior).pDistributions.get().get(1).calculateLogP();
+            return posterior.calculateLogP();
         };
 
         double logHastingsRatio;

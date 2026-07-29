@@ -209,6 +209,7 @@ public class TripletDistanceOperator extends TreeOperator {
             double standardDeviation = Math.sqrt(getVariance(scaleFactor));
             return this.meanDistance + standardDeviation * random.nextGaussian();
         }
+        
 
         private double logDensity(double distance, double scaleFactor) {
             if (!Double.isFinite(distance)) {
