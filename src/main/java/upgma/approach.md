@@ -150,3 +150,19 @@ We can use this conditional density in a few different ways:
 2. Data augmentation: We augment the state to $D$ and use the augmented distribution to perform MCMC in this augmented state.
 3. Local augmentation: only perturb the distances for the distances of a randomly selected clade of size $k$. This counters the curse of high dimensionality.
 4. Apply HMC on the auxiliary tree distribution / use a slice sampler on $D$.
+
+*Note (03.09.2026): centering the Beta weights on the merge distance*
+
+The parameterization above uses the raw scores $S_r(V, A)$ and $S_r(V, B)$. Both contain the shared component $d(r)$, since every path from $V$ to $A$ or $B$ passes through the merge of $A$ and $B$, so for deep nodes the ratio collapses towards $|A| / |X|$ and carries almost no information from the data.
+
+The quantity $p_r(V, A)$ actually models is the fraction of the excess over the merge distance. If $D$ were the data-implied distance matrix $D^*$, we would have
+$$
+p_r^*(V, A) = \frac{|A| (d^*(V, A) - d(r))}{|A| (d^*(V, A) - d(r)) + |B| (d^*(V, B) - d(r))}.
+$$
+We therefore now use the centered weights
+$$
+p_r(V, A) \sim Beta(c\, m, c\, (1 - m)), \quad m = \frac{|A| (S_r(V, A) - d(r))_+}{|A| (S_r(V, A) - d(r))_+ + |B| (S_r(V, B) - d(r))_+},
+$$
+with $(x)_+ = \max(x, 0)$. For the units to match, $S_r$ is measured in the units of $D$: each pairwise substitution distance is divided by the substitution rate and extended to the present by adding the two sampling times, $d^*(i, j) = d_{SM}(i, j) / r_{SM} + \rho(i) + \rho(j)$. When both excesses are clipped to zero (the tree is deeper than the data suggests), $m$ falls back to the no-information value $|A| / |X|$. $m$ is clamped to $[0.1, 0.9]$ so that neither Beta shape can collapse to zero, which would put the slack exactly at zero and create ties in the clustering.
+
+The sampler and the conditional density must use the same $m$; both call the same helper.

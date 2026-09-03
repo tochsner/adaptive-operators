@@ -34,14 +34,16 @@ import java.util.List;
  */
 public class UpgmaDistanceSampler {
 
-    // added to weightedA/weightedB before they set the Beta shape, so that two clusters with
-    // identical (or coincidentally tied) substitution distances to V never produce a 0/0 total or
-    // a 0 shape parameter (Gamma(0, .) is degenerate). Negligible against any real JC69 signal.
-    private static final double WEIGHT_PSEUDOCOUNT = 1e-8;
+    // the Beta mean is clamped to [MIN_MEAN, 1 - MIN_MEAN] so neither shape parameter can collapse to
+    // 0 when the data says V is (almost) exactly as far from A as A is from B. Must match between
+    // UpgmaDistanceSampler and UpgmaConditionalDensity, since the Hastings ratio depends on both
+    // using the same Beta shapes.
+    private static final double MIN_MEAN = 0.1;
 
     private final int n;
     private final double concentration;
     private final double[][] substitutionDistances;
+    private final double[] tipDates;
     private final RealScalar<?> substitutionRate;
 
     /** Internal nodes in ascending height order: {@code mergeOrder[r - 1]} is the tree's r-th merge. */
@@ -53,9 +55,10 @@ public class UpgmaDistanceSampler {
     /** Leaf indices under every node, indexed by node number. */
     private final int[][] clade;
 
-    public UpgmaDistanceSampler(Tree tree, double[][] substitutionDistances, RealScalar<?> substitutionRate, double concentration) {
+    public UpgmaDistanceSampler(Tree tree, double[][] substitutionDistances, double[] tipDates, RealScalar<?> substitutionRate, double concentration) {
         this.n = tree.getLeafNodeCount();
         this.substitutionDistances = substitutionDistances;
+        this.tipDates = tipDates;
         this.substitutionRate = substitutionRate;
         this.concentration = concentration;
 
@@ -136,7 +139,8 @@ public class UpgmaDistanceSampler {
             int bSize = this.clade[bId].length;
             int xSize = aSize + bSize;
 
-            double delta = this.mergeDistance[r + 1] - this.mergeDistance[r];
+            double dr = this.mergeDistance[r];
+            double delta = this.mergeDistance[r + 1] - dr;
 
             active.remove(Integer.valueOf(xId));
 
@@ -154,11 +158,12 @@ public class UpgmaDistanceSampler {
                 double vx = getSlack(slack, v, xId);
                 double base = xSize * (vx + delta);
 
-                double weightedA = aSize * substitutionScore(this.clade[v], this.clade[aId]) + WEIGHT_PSEUDOCOUNT;
-                double weightedB = bSize * substitutionScore(this.clade[v], this.clade[bId]) + WEIGHT_PSEUDOCOUNT;
-                double total = weightedA + weightedB;
+                double mean = betaMean(
+                        substitutionScore(this.clade[v], this.clade[aId]) - dr,
+                        substitutionScore(this.clade[v], this.clade[bId]) - dr,
+                        aSize, bSize);
 
-                double p = sampleBeta(this.concentration * weightedA / total, this.concentration * weightedB / total);
+                double p = sampleBeta(this.concentration * mean, this.concentration * (1.0 - mean));
                 setSlack(slack, v, aId, p * base / aSize);
                 setSlack(slack, v, bId, (1.0 - p) * base / bSize);
             }
@@ -179,12 +184,18 @@ public class UpgmaDistanceSampler {
         }
     }
 
-    /** {@code S_r(V, A)}: the mean substitution distance between two disjoint leaf sets. */
+    /**
+     * {@code S_r(V, A)}: the mean data-implied distance between two disjoint leaf sets, in the units of
+     * D. Each pairwise substitution distance is converted to time by the substitution rate and
+     * extended to the present by adding both sampling times, so that it is directly comparable to
+     * the merge distances {@code d(r) = 2 * height(r)}.
+     */
     private double substitutionScore(int[] leavesV, int[] leavesA) {
+        double rate = this.substitutionRate.get();
         double sum = 0.0;
         for (int v : leavesV) {
             for (int a : leavesA) {
-                sum += this.substitutionDistances[v][a] / this.substitutionRate.get();
+                sum += this.substitutionDistances[v][a] / rate + this.tipDates[v] + this.tipDates[a];
             }
         }
         return sum / (leavesV.length * leavesA.length);
@@ -195,6 +206,22 @@ public class UpgmaDistanceSampler {
         double x = Randomizer.nextGamma(alpha, 1.0);
         double y = Randomizer.nextGamma(beta, 1.0);
         return x / (x + y);
+    }
+
+
+    /**
+     * Mean of {@code p_r(V, A)}: the fraction of the excess {@code |A|(S(V, A) - d(r))} over the total
+     * excess {@code |A|(S(V, A) - d(r)) + |B|(S(V, B) - d(r))}, with negative excesses clipped to 0.
+     * Falls back to the no-information value {@code |A| / |X|} when the data places V no further
+     * from either child than the merge distance, and is clamped away from 0 and 1.
+     */
+    private static double betaMean(double excessA, double excessB, int aSize, int bSize) {
+        double weightedA = aSize * Math.max(excessA, 0.0);
+        double weightedB = bSize * Math.max(excessB, 0.0);
+        double total = weightedA + weightedB;
+
+        double mean = total > 0.0 ? weightedA / total : (double) aSize / (aSize + bSize);
+        return Math.min(Math.max(mean, MIN_MEAN), 1.0 - MIN_MEAN);
     }
 
     private static double getSlack(double[][] slack, int a, int b) {

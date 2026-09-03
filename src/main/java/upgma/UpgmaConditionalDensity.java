@@ -30,15 +30,16 @@ import java.util.List;
  */
 public class UpgmaConditionalDensity {
 
-    // must match UpgmaDistanceSampler.WEIGHT_PSEUDOCOUNT exactly: both add it to weightedA/weightedB
-    // before it sets the Beta shape, so a 0/0 total or a 0 shape parameter (from two clusters with
-    // identical, or coincidentally tied, substitution distances to V) never arises. Negligible
-    // against any real JC69 signal.
-    private static final double WEIGHT_PSEUDOCOUNT = 1e-8;
+    // the Beta mean is clamped to [MIN_MEAN, 1 - MIN_MEAN] so neither shape parameter can collapse to
+    // 0 when the data says V is (almost) exactly as far from A as A is from B. Must match between
+    // UpgmaDistanceSampler and UpgmaConditionalDensity, since the Hastings ratio depends on both
+    // using the same Beta shapes.
+    private static final double MIN_MEAN = 0.1;
 
     private final int n;
     private final double concentration;
     private final double[][] substitutionDistances;
+    private final double[] tipDates;
     private final RealScalar<?> substitutionRate;
 
     /** Internal nodes in ascending height order: {@code mergeOrder[r - 1]} is the tree's r-th merge. */
@@ -51,9 +52,10 @@ public class UpgmaConditionalDensity {
     private final int[][] clade;
 
     public UpgmaConditionalDensity(
-            Tree tree, double[][] substitutionDistances, RealScalar<?> substitutionRate, double concentration) {
+            Tree tree, double[][] substitutionDistances, double[] tipDates, RealScalar<?> substitutionRate, double concentration) {
         this.n = tree.getLeafNodeCount();
         this.substitutionDistances = substitutionDistances;
+        this.tipDates = tipDates;
         this.substitutionRate = substitutionRate;
         this.concentration = concentration;
 
@@ -138,11 +140,12 @@ public class UpgmaConditionalDensity {
                 double base = xSize * (dVX - dr);
                 double p = aSize * (dVA - dr) / base;
 
-                double weightedA = aSize * substitutionScore(vLeaves, this.clade[aId]) + WEIGHT_PSEUDOCOUNT;
-                double weightedB = bSize * substitutionScore(vLeaves, this.clade[bId]) + WEIGHT_PSEUDOCOUNT;
-                double total = weightedA + weightedB;
-                double alpha = this.concentration * weightedA / total;
-                double beta = this.concentration * weightedB / total;
+                double mean = betaMean(
+                        substitutionScore(vLeaves, this.clade[aId]) - dr,
+                        substitutionScore(vLeaves, this.clade[bId]) - dr,
+                        aSize, bSize);
+                double alpha = this.concentration * mean;
+                double beta = this.concentration * (1.0 - mean);
 
                 logDensity += logBetaPdf(p, alpha, beta);
                 logDensity -= Math.log(xSize) + Math.log(base) - Math.log(aSize) - Math.log(bSize);
@@ -166,15 +169,37 @@ public class UpgmaConditionalDensity {
         return sum / (leavesV.length * (double) leavesA.length);
     }
 
-    /** {@code S_r(V, A)}: the mean substitution distance between two disjoint leaf sets. */
+    /**
+     * {@code S_r(V, A)}: the mean data-implied distance between two disjoint leaf sets, in the units of
+     * D. Each pairwise substitution distance is converted to time by the substitution rate and
+     * extended to the present by adding both sampling times, so that it is directly comparable to
+     * the merge distances {@code d(r) = 2 * height(r)}.
+     */
     private double substitutionScore(int[] leavesV, int[] leavesA) {
+        double rate = this.substitutionRate.get();
         double sum = 0.0;
         for (int v : leavesV) {
             for (int a : leavesA) {
-                sum += this.substitutionDistances[v][a] / this.substitutionRate.get();
+                sum += this.substitutionDistances[v][a] / rate + this.tipDates[v] + this.tipDates[a];
             }
         }
         return sum / (leavesV.length * (double) leavesA.length);
+    }
+
+
+    /**
+     * Mean of {@code p_r(V, A)}: the fraction of the excess {@code |A|(S(V, A) - d(r))} over the total
+     * excess {@code |A|(S(V, A) - d(r)) + |B|(S(V, B) - d(r))}, with negative excesses clipped to 0.
+     * Falls back to the no-information value {@code |A| / |X|} when the data places V no further
+     * from either child than the merge distance, and is clamped away from 0 and 1.
+     */
+    private static double betaMean(double excessA, double excessB, int aSize, int bSize) {
+        double weightedA = aSize * Math.max(excessA, 0.0);
+        double weightedB = bSize * Math.max(excessB, 0.0);
+        double total = weightedA + weightedB;
+
+        double mean = total > 0.0 ? weightedA / total : (double) aSize / (aSize + bSize);
+        return Math.min(Math.max(mean, MIN_MEAN), 1.0 - MIN_MEAN);
     }
 
     private static double logBetaPdf(double p, double alpha, double beta) {

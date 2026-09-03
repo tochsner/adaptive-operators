@@ -130,7 +130,7 @@ public class UpgmaRefreshOperator extends TreeOperator {
      * branches extended to the present.
      */
     private void sampleDistances(double[][] distances, Tree tree) {
-        UpgmaDistanceSampler sampler = new UpgmaDistanceSampler(tree, this.substitutionDistances, this.substitutionRate, this.concentration);
+        UpgmaDistanceSampler sampler = new UpgmaDistanceSampler(tree, this.substitutionDistances, this.tipDates, this.substitutionRate, this.concentration);
         sampler.sample(distances);
     }
 
@@ -140,7 +140,7 @@ public class UpgmaRefreshOperator extends TreeOperator {
      */
     private double getConditionalLogDensity(double[][] distances, Tree tree) {
         UpgmaConditionalDensity density =
-                new UpgmaConditionalDensity(tree, this.substitutionDistances, this.substitutionRate, this.concentration);
+                new UpgmaConditionalDensity(tree, this.substitutionDistances, this.tipDates, this.substitutionRate, this.concentration);
         return density.logDensity(distances);
     }
 
