@@ -16,7 +16,7 @@ import java.util.List;
 /**
  * Implement an operator that:
  * 1.   Samples a distance matrix D conditioned on the current tree such that UPGMA(D) = T.
- * 2.   Perturbs D by adding Gaussian noise.
+ * 2.   Perturbs D by multiplying entries with log-normal noise.
  * 3.   Performs UPGMA to reconstruct the perturbed tree.
  * See @approach.md for a description of the conditional density.
  */
@@ -104,9 +104,9 @@ public class UpgmaRefreshOperator extends TreeOperator {
         this.sampleDistances(this.currentDistances, this.tree);
         double oldTreeLogDensity = this.getConditionalLogDensity(this.currentDistances, this.tree);
         
-        // perturb the distance matrix with a Gaussian of scale scaleFactor
+        // perturb the distance matrix in log space with a Gaussian of scale scaleFactor
 
-        this.perturbDistances(this.currentDistances, this.proposedDistances);
+        double logJacobian = this.perturbDistances(this.currentDistances, this.proposedDistances);
         if (this.isInvalidDistanceMatrix(this.proposedDistances)) {
             return Double.NEGATIVE_INFINITY;
         }
@@ -120,9 +120,9 @@ public class UpgmaRefreshOperator extends TreeOperator {
 
         double newTreeLogDensity = this.getConditionalLogDensity(this.proposedDistances, this.tree);
 
-        // compute and return the HR ratio
+        // compute and return the HR ratio, including the log Jacobian of the multiplicative perturbation
 
-        return newTreeLogDensity - oldTreeLogDensity;
+        return newTreeLogDensity - oldTreeLogDensity + logJacobian;
     }
 
     /**
@@ -147,10 +147,15 @@ public class UpgmaRefreshOperator extends TreeOperator {
     /**
      * Perturbs currentDistances and stores the new distances in proposedDistances.
      * Every distance between two taxa in a uniformly random set of {@link #affectedNodeCount} taxa
-     * is perturbed by a random Gaussian with scale scaleFactor; every other distance is copied
-     * through unchanged.
+     * is multiplied by {@code exp(scaleFactor * N(0, 1))}; every other distance is copied through
+     * unchanged. Working in log space keeps every perturbed distance strictly positive and makes
+     * the move scale-free, so a single adapted scaleFactor fits shallow and deep distances alike.
+     *
+     * <p>Returns the log Jacobian of the perturbation, {@code sum of log(d'_ij / d_ij)} over the
+     * perturbed pairs, which the multiplicative (and hence asymmetric) kernel contributes to the
+     * Hastings ratio.
      */
-    private void perturbDistances(double[][] currentDistances, double[][] proposedDistances) {
+    private double perturbDistances(double[][] currentDistances, double[][] proposedDistances) {
         int[] permutation = Randomizer.shuffled(this.n);
 
         boolean[] affected = new boolean[this.n];
@@ -158,16 +163,20 @@ public class UpgmaRefreshOperator extends TreeOperator {
             affected[permutation[i]] = true;
         }
 
+        double logJacobian = 0.0;
         for (int i = 0; i < this.n; i++) {
             for (int j = i + 1; j < this.n; j++) {
                 double value = currentDistances[i][j];
                 if (affected[i] && affected[j]) {
-                    value += this.scaleFactor * Randomizer.nextGaussian();
+                    double logScale = this.scaleFactor * Randomizer.nextGaussian();
+                    value *= Math.exp(logScale);
+                    logJacobian += logScale;
                 }
                 proposedDistances[i][j] = value;
                 proposedDistances[j][i] = value;
             }
         }
+        return logJacobian;
     }
 
     /**
