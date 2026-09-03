@@ -30,6 +30,12 @@ import java.util.List;
  */
 public class UpgmaConditionalDensity {
 
+    // must match UpgmaDistanceSampler.WEIGHT_PSEUDOCOUNT exactly: both add it to weightedA/weightedB
+    // before it sets the Beta shape, so a 0/0 total or a 0 shape parameter (from two clusters with
+    // identical, or coincidentally tied, substitution distances to V) never arises. Negligible
+    // against any real JC69 signal.
+    private static final double WEIGHT_PSEUDOCOUNT = 1e-8;
+
     private final int n;
     private final double concentration;
     private final double[][] substitutionDistances;
@@ -132,8 +138,8 @@ public class UpgmaConditionalDensity {
                 double base = xSize * (dVX - dr);
                 double p = aSize * (dVA - dr) / base;
 
-                double weightedA = aSize * substitutionScore(vLeaves, this.clade[aId]);
-                double weightedB = bSize * substitutionScore(vLeaves, this.clade[bId]);
+                double weightedA = aSize * substitutionScore(vLeaves, this.clade[aId]) + WEIGHT_PSEUDOCOUNT;
+                double weightedB = bSize * substitutionScore(vLeaves, this.clade[bId]) + WEIGHT_PSEUDOCOUNT;
                 double total = weightedA + weightedB;
                 double alpha = this.concentration * weightedA / total;
                 double beta = this.concentration * weightedB / total;

@@ -34,6 +34,11 @@ import java.util.List;
  */
 public class UpgmaDistanceSampler {
 
+    // added to weightedA/weightedB before they set the Beta shape, so that two clusters with
+    // identical (or coincidentally tied) substitution distances to V never produce a 0/0 total or
+    // a 0 shape parameter (Gamma(0, .) is degenerate). Negligible against any real JC69 signal.
+    private static final double WEIGHT_PSEUDOCOUNT = 1e-8;
+
     private final int n;
     private final double concentration;
     private final double[][] substitutionDistances;
@@ -149,8 +154,8 @@ public class UpgmaDistanceSampler {
                 double vx = getSlack(slack, v, xId);
                 double base = xSize * (vx + delta);
 
-                double weightedA = aSize * substitutionScore(this.clade[v], this.clade[aId]);
-                double weightedB = bSize * substitutionScore(this.clade[v], this.clade[bId]);
+                double weightedA = aSize * substitutionScore(this.clade[v], this.clade[aId]) + WEIGHT_PSEUDOCOUNT;
+                double weightedB = bSize * substitutionScore(this.clade[v], this.clade[bId]) + WEIGHT_PSEUDOCOUNT;
                 double total = weightedA + weightedB;
 
                 double p = sampleBeta(this.concentration * weightedA / total, this.concentration * weightedB / total);

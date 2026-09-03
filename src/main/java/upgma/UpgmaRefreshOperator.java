@@ -23,11 +23,13 @@ import java.util.List;
 public class UpgmaRefreshOperator extends TreeOperator {
 
     public final Input<Double> concentrationInput = new Input<>("concentration", "", 10.0);
+    public final Input<Integer> affectedNodeCountInput = new Input<>("affectedCladeSize", "", 0);
     public final Input<RealScalar<?>> substitutionRateInput = new Input<>("substitutionRate", "");
     public final Input<Alignment> alignmentInput = new Input<>("alignment", "");
 
     Tree tree;
     double concentration;
+    int affectedNodeCount;
     RealScalar<?> substitutionRate;
     Alignment alignment;
 
@@ -44,6 +46,9 @@ public class UpgmaRefreshOperator extends TreeOperator {
     public void initAndValidate() {
         this.tree = this.treeInput.get();
         this.concentration = this.concentrationInput.get();
+        this.affectedNodeCount = this.affectedNodeCountInput.get() > 0
+                ? Math.min(this.affectedNodeCountInput.get(), this.tree.getLeafNodeCount())
+                : this.tree.getLeafNodeCount();
         this.substitutionRate = this.substitutionRateInput.get();
         this.alignment = this.alignmentInput.get();
 
@@ -141,14 +146,26 @@ public class UpgmaRefreshOperator extends TreeOperator {
 
     /**
      * Perturbs currentDistances and stores the new distances in proposedDistances.
-     * Every distance is perturbed by a random Gaussian with scale scaleFactor.
+     * Every distance between two taxa in a uniformly random set of {@link #affectedNodeCount} taxa
+     * is perturbed by a random Gaussian with scale scaleFactor; every other distance is copied
+     * through unchanged.
      */
     private void perturbDistances(double[][] currentDistances, double[][] proposedDistances) {
+        int[] permutation = Randomizer.shuffled(this.n);
+
+        boolean[] affected = new boolean[this.n];
+        for (int i = 0; i < this.affectedNodeCount; i++) {
+            affected[permutation[i]] = true;
+        }
+
         for (int i = 0; i < this.n; i++) {
             for (int j = i + 1; j < this.n; j++) {
-                double perturbed = currentDistances[i][j] + this.scaleFactor * Randomizer.nextGaussian();
-                proposedDistances[i][j] = perturbed;
-                proposedDistances[j][i] = perturbed;
+                double value = currentDistances[i][j];
+                if (affected[i] && affected[j]) {
+                    value += this.scaleFactor * Randomizer.nextGaussian();
+                }
+                proposedDistances[i][j] = value;
+                proposedDistances[j][i] = value;
             }
         }
     }
