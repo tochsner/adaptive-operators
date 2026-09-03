@@ -113,9 +113,9 @@ We have
 $$
 |X| (s_{r+1}(V, X) + \Delta_r) = |A|s_{r}(V, A) + |B|s_{r}(V, B)
 $$
-$p_r(V, A)$ determines how close $V$ is to $A$ compared to $B$. We can look at a cheap pairwise-distance score induced by the substitution model distances:
+$p_r(V, A)$ determines how close $V$ is to $A$ compared to $B$. We can look at a cheap pairwise-distance score induced by the expected substitutions $d_{SM}$ and the substitution rate $r_{SM}$:
 $$
-S_r(V, A) = \frac{1}{|V||A|}\sum_{v\in V, a \in A}{d_{SM}(v, a)}.
+S_r(V, A) = \frac{1}{|V||A|}\sum_{v\in V, a \in A}{d_{SM}(v, a) / r_{SM}}.
 $$
 
 For example, we can set

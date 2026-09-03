@@ -1,10 +1,17 @@
 package upgma;
 
+import adapters.TreeUtils;
 import beast.base.core.Input;
 import beast.base.evolution.alignment.Alignment;
 import beast.base.evolution.distance.JukesCantorDistance;
 import beast.base.evolution.operator.TreeOperator;
+import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
+import beast.base.inference.StateNode;
+import beast.base.spec.type.RealScalar;
+import beast.base.util.Randomizer;
+
+import java.util.List;
 
 /**
  * Implement an operator that:
@@ -15,19 +22,20 @@ import beast.base.evolution.tree.Tree;
  */
 public class UpgmaRefreshOperator extends TreeOperator {
 
-    public final Input<Double> concentrationInput = new Input<>("concentration", "", 1.0);
-    public final Input<Double> substitutionRateInput = new Input<>("substitutionRate", "", 1.0);
+    public final Input<Double> concentrationInput = new Input<>("concentration", "", 10.0);
+    public final Input<RealScalar<?>> substitutionRateInput = new Input<>("substitutionRate", "");
     public final Input<Alignment> alignmentInput = new Input<>("alignment", "");
 
     Tree tree;
     double concentration;
-    double substitutionRate;
+    RealScalar<?> substitutionRate;
     Alignment alignment;
 
-    double scaleFactor = 1.0;
+    double scaleFactor = 0.01;
 
     int n;
     double[][] substitutionDistances;
+    double[] tipDates;
 
     double[][] currentDistances;
     double[][] proposedDistances;
@@ -43,21 +51,39 @@ public class UpgmaRefreshOperator extends TreeOperator {
         this.currentDistances = new double[n][n];
         this.proposedDistances = new double[n][n];
 
+        this.tipDates = this.computeTipDates();
         this.substitutionDistances = this.computeSubstitutionDistances(this.alignment);
     }
 
     /**
-     * Computes the pairwise JC69 distances in expected substitutions.
+     * Computes the tip dates, indexed by tree leaf node number.
+     */
+    private double[] computeTipDates() {
+        double[] tipDates = new double[this.n];
+        for (int i = 0; i < this.n; i++) {
+            tipDates[i] = this.tree.getNode(i).getHeight();
+        }
+        return tipDates;
+    }
+
+    /**
+     * Computes the pairwise JC69 distances in expected substitutions, indexed by tree leaf node
+     * number (not by alignment taxon index, which need not agree with it) so the result lines up
+     * with {@link #tipDates}, {@link #currentDistances}, {@link #proposedDistances}, and the
+     * BEAST-node-numbered convention {@code TreeUtils.applyClustering} expects.
      */
     private double[][] computeSubstitutionDistances(Alignment alignment) {
         JukesCantorDistance distance = new JukesCantorDistance();
         distance.setPatterns(alignment);
 
-        int n = alignment.getSiteCount();
-        double[][] substitutionDistances = new double[n][n];
-        for (int i = 0; i < n; i++) {
-            for (int j = i + 1; j < n; j++) {
-                double d = distance.pairwiseDistance(i, j);
+        double[][] substitutionDistances = new double[this.n][this.n];
+        for (int i = 0; i < this.n; i++) {
+            int taxonIndexI = alignment.getTaxonIndex(this.tree.getNode(i).getID());
+
+            for (int j = i + 1; j < this.n; j++) {
+                int taxonIndexJ = alignment.getTaxonIndex(this.tree.getNode(j).getID());
+
+                double d = distance.pairwiseDistance(taxonIndexI, taxonIndexJ);
                 substitutionDistances[i][j] = d;
                 substitutionDistances[j][i] = d;
             }
@@ -76,10 +102,17 @@ public class UpgmaRefreshOperator extends TreeOperator {
         // perturb the distance matrix with a Gaussian of scale scaleFactor
 
         this.perturbDistances(this.currentDistances, this.proposedDistances);
+        if (this.isInvalidDistanceMatrix(this.proposedDistances)) {
+            return Double.NEGATIVE_INFINITY;
+        }
 
         // reconstruct the new tree
 
         this.updateTree(this.tree, this.proposedDistances);
+        if (this.isInvalidTree(this.tree)) {
+            return Double.NEGATIVE_INFINITY;
+        }
+
         double newTreeLogDensity = this.getConditionalLogDensity(this.proposedDistances, this.tree);
 
         // compute and return the HR ratio
@@ -88,15 +121,22 @@ public class UpgmaRefreshOperator extends TreeOperator {
     }
 
     /**
-     * Samples a new distance matrix conditioned on the given tree.
+     * Samples a new distance matrix conditioned on the given tree. The distances correspond to a tree with extant
+     * branches extended to the present.
      */
     private void sampleDistances(double[][] distances, Tree tree) {
+        UpgmaDistanceSampler sampler = new UpgmaDistanceSampler(tree, this.substitutionDistances, this.substitutionRate, this.concentration);
+        sampler.sample(distances);
     }
 
     /**
-     * Returns the conditional density of the distances conditioned on the tree.
+     * Returns the conditional density of the distances conditioned on the tree (including the Jacobian correction).
+     * The distances correspond to a tree with extant branches extended to the present.
      */
     private double getConditionalLogDensity(double[][] distances, Tree tree) {
+        UpgmaConditionalDensity density =
+                new UpgmaConditionalDensity(tree, this.substitutionDistances, this.substitutionRate, this.concentration);
+        return density.logDensity(distances);
     }
 
     /**
@@ -104,14 +144,53 @@ public class UpgmaRefreshOperator extends TreeOperator {
      * Every distance is perturbed by a random Gaussian with scale scaleFactor.
      */
     private void perturbDistances(double[][] currentDistances, double[][] proposedDistances) {
+        for (int i = 0; i < this.n; i++) {
+            for (int j = i + 1; j < this.n; j++) {
+                double perturbed = currentDistances[i][j] + this.scaleFactor * Randomizer.nextGaussian();
+                proposedDistances[i][j] = perturbed;
+                proposedDistances[j][i] = perturbed;
+            }
+        }
     }
 
     /**
-     * Updates the tree by performing UPGMA on the distance matrix. The node objects stay the same,
-     * the only thing that changes is the vertex relationships. Tries to keep as much of the original
-     * tree intact.
+     * Updates the tree by performing UPGMA on the distance matrix. The distances correspond to a tree with
+     * extant branches extended to the present, the resulting UPGMA tree gets pruned. This might lead to negative extant
+     * branch lengths.
+     * The node objects stay the same, the only thing that changes is the vertex relationships.
+     * Tries to keep as much of the original tree intact using {@code TreeUtils.applyClustering}.
      */
     private void updateTree(Tree tree, double[][] distances) {
+        this.tree.startEditing(this);
+
+        UpgmaClustering.Result clustering = UpgmaClustering.cluster(distances);
+        TreeUtils.applyClustering(tree, clustering.mergeLeft, clustering.mergeRight, clustering.mergeHeight);
+    }
+
+    /**
+     * Returns true if there are negative distances.
+     */
+    private boolean isInvalidDistanceMatrix(double[][] distances) {
+        for (int i = 0; i < this.n; i++) {
+            for (int j = 0; j < this.n; j++) {
+                if (distances[i][j] < 0.0) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Returns true if the tree has negative branch lengths.
+     */
+    private boolean isInvalidTree(Tree tree) {
+        for (Node node : tree.getNodesAsArray()) {
+            if (!node.isRoot() && node.getLength() < 0.0) {
+                return true;
+            }
+        }
+        return false;
     }
 
 
@@ -137,4 +216,8 @@ public class UpgmaRefreshOperator extends TreeOperator {
         this.scaleFactor = Math.exp(delta);
     }
 
+    @Override
+    public List<StateNode> listStateNodes() {
+        return List.of(this.tree);
+    }
 }

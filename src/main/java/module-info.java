@@ -41,6 +41,7 @@ import mcmc.SliceMCMC;
 import mcmc.MLMCMC;
 import mcmc.MalaMCMC;
 import mcmc.JumpMCMC;
+import upgma.UpgmaRefreshOperator;
 import delayedacceptance.ApproximateDelayedAcceptanceMCMC;
 import delayedacceptance.DelayedAcceptanceMCMC;
 import delayedacceptance.MLPPosteriorApproximation;
@@ -74,6 +75,7 @@ open module adaptiveoperators {
             StepOutShrinkSliceOperator,
             MultivariateStepOutShrinkSliceOperator,
             MAPGuidedMALAOperator,
+            UpgmaRefreshOperator,
             CubeAdapter,
             MalaMCMC,
             SliceMCMC,
