@@ -27,6 +27,7 @@ import transport.NodeTransportOperator;
 import transport.GuidedNodeTransportOperator;
 import slice.StepOutShrinkSliceOperator;
 import slice.LinCombSliceOperator;
+import multipletry.MultipleTryOperator;
 import slice.MultivariateStepOutShrinkSliceOperator;
 import mala.MAPGuidedMALAOperator;
 import mala.MALAOperator;
@@ -43,6 +44,7 @@ import mcmc.JumpMCMC;
 import delayedacceptance.ApproximateDelayedAcceptanceMCMC;
 import delayedacceptance.DelayedAcceptanceMCMC;
 import delayedacceptance.MLPPosteriorApproximation;
+import distancematrix.DistanceMatrixOperator;
 
 open module adaptiveoperators {
     requires beast.pkgmgmt;
@@ -63,6 +65,7 @@ open module adaptiveoperators {
     exports weightoptimization;
 
     provides beast.base.core.BEASTInterface with
+            DistanceMatrixOperator,
             AdaptiveOperator,
             BasicAdapter,
             TaxaDistanceAdapterGenerator,
@@ -78,6 +81,7 @@ open module adaptiveoperators {
             GuidedRandomWalkOperator,
             MALAOperator,
             LinCombSliceOperator,
+            MultipleTryOperator,
             GuidedNodeTransportOperator,
             CubeMAPGuidedMALAOperator,
             FisherMALAOperator,

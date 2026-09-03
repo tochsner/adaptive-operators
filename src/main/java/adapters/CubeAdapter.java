@@ -110,6 +110,27 @@ public class CubeAdapter extends BEASTObject implements MAPAdapter {
         return logCorrection;
     }
 
+    /**
+     * Identifies each coordinate by the unordered pair of leaves it spans rather than by its
+     * position in the cube. {@link #refresh()} redraws the cube every proposal, so a position
+     * refers to a different pair each time and is useless as a key; the pair is the quantity
+     * that actually persists.
+     */
+    @Override
+    public int[] getMutableKeys(int nodeId) {
+        int[] keys = new int[this.getNumMutable()];
+        int numLeaves = this.tree.getLeafNodeCount();
+
+        for (int i = 0; i < keys.length; i++) {
+            int first = this.cube.get(i);
+            int second = this.cube.get(i + 1);
+
+            keys[i] = Math.min(first, second) * numLeaves + Math.max(first, second);
+        }
+
+        return keys;
+    }
+
     @Override
     public List<StateNode> listStateNodes() {
         return List.of(this.tree);

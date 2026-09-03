@@ -5,6 +5,7 @@ This README summarizes the operator approaches implemented in this package:
 - [Adapters](#adapters)
 - [Learned Conditional Proposals](#learned-conditional-proposals)
 - [Learned Tree-Distance Proposals](#learned-tree-distance-proposals)
+- [Distance-Matrix Proposals](#distance-matrix-proposals)
 - [Slice-Based Proposals](#slice-based-proposals)
 - [Transport-Based Proposals](#transport-based-proposals)
 - [Gradient and MALA Proposals](#gradient-and-mala-proposals)
@@ -57,6 +58,33 @@ Relevant classes:
 - [`adaptiveoperators.TripletDistanceOperator`](src/main/java/adaptiveoperators/TripletDistanceOperator.java)
 - [`adaptiveoperators.LogNormalModel`](src/main/java/adaptiveoperators/LogNormalModel.java)
 - [`adaptiveoperators.NeuralLogNormalModel`](src/main/java/adaptiveoperators/NeuralLogNormalModel.java)
+
+## Distance-Matrix Proposals
+
+`DistanceMatrixOperator` carries a full taxon-by-taxon distance matrix as augmented state and defines the tree as a deterministic function of it. The tree is at all times the *single-linkage* tree of the matrix: walk the taxon pairs in ascending order of distance and merge whenever the two endpoints are not yet connected. That is Kruskal's algorithm, so the merges performed are the `n - 1` minimum spanning tree edges and every other entry is skipped. A proposal perturbs one entry by a Gaussian random walk with a Robbins-Monro adapted scale, and the spanning tree is repaired incrementally rather than reclustered.
+
+Single linkage is what makes this work on a time tree. It is ultrametric-valued for *any* input matrix, so a perturbed matrix maps straight onto a valid rooted ultrametric tree with no rooting or tip-repair step, and it reproduces an ultrametric matrix exactly, so the matrix can be initialised from the state tree's own distances without overwriting the tree. Tips are assumed contemporaneous.
+
+The Hastings ratio is **not** one. The single-entry walk is symmetric, but that only makes the chain reversible with respect to `pi(SL(D))` on matrix space, and the matrix has `n(n-1)/2` entries against the tree's `n - 1` heights, so the map is many-to-one with unbounded fibres and the tree marginal would come out as `pi(T) * V(T)`. Single linkage makes `V(T)` computable in closed form: every taxon pair has exactly one most recent common ancestor, so the pairs partition into `n - 1` groups of size `m_v = |A_v| * |B_v|`, the fibre factorises over those groups, and under a reference density `g` on the entries the induced density of the node distances `w_v = 2 h_v` is that of `n - 1` independent group minima:
+
+```
+log V(T) = sum_v [ log m_v + log g(w_v) + (m_v - 1) * log Gbar(w_v) ]
+```
+
+Targeting `pi(SL(D)) * prod_ij g(D_ij) / V(SL(D))` divides the fibre volume out and makes the tree marginal exactly `pi(T)`. The operator returns `log g(D') - log g(D) + log V(T) - log V(T')`, plus a term for the choice of entry described below. Setting `correctFibreVolume="false"` recovers the uncorrected symmetric walk for comparison runs, which `DistanceMatrixOperatorInvarianceTest` shows to be measurably biased.
+
+Only `n - 1` of the `n(n-1)/2` entries are spanning tree edges, and each one is a node height, so choosing an entry uniformly would spend a fraction `1 - 2/n` of the proposals on entries the tree does not depend on: 97 per cent at sixty taxa. `spanningTreeProbability` (default `0.5`) is the probability of picking one of the entries the clustering uses. Entries can join and leave the spanning tree, so the choice is not symmetric and `log q(pair | D') - log q(pair | D)` enters the Hastings ratio.
+
+The matrix is private to the operator, so anything else that changes the tree breaks the invariant. Two things do: BEAST's state node initialisers, a `RandomTree` among them, which run from inside `MCMC.run()` long after every `initAndValidate()`, and any other operator acting on the same tree. Every proposal therefore checks that the tree is still the clustering of the matrix and rebuilds the matrix from the tree when it is not. The rebuild draws from the exact conditional of the matrix given the tree — within each group of pairs sharing a most recent common ancestor, one entry attains the node distance and the rest come from the tail of `g` — so it is a Gibbs step and leaves the target alone. That is what makes the operator safe to mix with arbitrary other tree operators.
+
+**Node heights high in the tree move very slowly.** Single linkage sets a node's distance to the minimum over the `m_v` pairs crossing it, so raising a node near the root means raising all `m_v` of its entries one proposal at a time. At sixty taxa the root has around nine hundred crossing pairs, and the overall tree scale is effectively frozen: on a 63-taxon HCV analysis the root height moved from 1.82 to 1.74 over three million states while the posterior wanted roughly 400. Pair this operator with a tree scaling operator rather than running it alone.
+
+Relevant classes:
+
+- [`distancematrix.DistanceMatrixOperator`](src/main/java/distancematrix/DistanceMatrixOperator.java)
+- [`distancematrix.SingleLinkageTree`](src/main/java/distancematrix/SingleLinkageTree.java)
+- [`distancematrix.ReferenceDensity`](src/main/java/distancematrix/ReferenceDensity.java)
+- [`adapters.TreeUtils.applyClustering`](src/main/java/adapters/TreeUtils.java), which installs a whole topology into an existing tree while keeping the node of every clade that survives
 
 ## Slice-Based Proposals
 

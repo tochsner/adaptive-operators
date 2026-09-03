@@ -659,4 +659,151 @@ public class TreeUtils {
         return false;
     }
 
+    /**
+     * Writes a clustering into an existing tree, keeping node identities wherever it can.
+     *
+     * <p>The clustering is given as {@code n - 1} merges in ascending height order. Clusters are
+     * numbered like nodes: {@code 0 .. n-1} are the leaves, in tree node numbering, and
+     * {@code n + k} is the cluster created by the {@code k}-th merge, so {@code 2n - 2} is the root.
+     *
+     * <p>Unlike {@link #changeNodeDistance} and {@link #reattachNode}, which edit the tree locally,
+     * this installs a whole topology. Every clade that survives the change keeps the very same
+     * {@link Node} object, and the leftover clades are matched to the leftover nodes by largest
+     * clade overlap, so the disruption stays confined to the part of the tree that actually moved.
+     */
+    public static void applyClustering(Tree tree, int[] mergeLeft, int[] mergeRight, double[] mergeHeight) {
+        applyClustering(tree, mergeLeft, mergeRight, mergeHeight, new Node[2 * tree.getLeafNodeCount() - 1]);
+    }
+
+    /**
+     * As {@link #applyClustering(Tree, int[], int[], double[])}, but also reports which node ended up
+     * carrying each cluster, so a caller that later changes a single merge height can go straight to
+     * the node instead of installing the whole topology again.
+     */
+    public static void applyClustering(
+            Tree tree, int[] mergeLeft, int[] mergeRight, double[] mergeHeight, Node[] nodeOfCluster) {
+        int leafCount = tree.getLeafNodeCount();
+        int mergeCount = leafCount - 1;
+
+        if (mergeLeft.length != mergeCount || mergeRight.length != mergeCount || mergeHeight.length != mergeCount) {
+            throw new IllegalArgumentException("expected " + mergeCount + " merges");
+        }
+
+        BitSet[] clades = new BitSet[2 * leafCount - 1];
+        for (int leaf = 0; leaf < leafCount; leaf++) {
+            clades[leaf] = new BitSet(leafCount);
+            clades[leaf].set(leaf);
+        }
+        for (int merge = 0; merge < mergeCount; merge++) {
+            BitSet clade = (BitSet) clades[mergeLeft[merge]].clone();
+            clade.or(clades[mergeRight[merge]]);
+            clades[leafCount + merge] = clade;
+        }
+
+        Map<Node, BitSet> currentClades = new HashMap<>();
+        collectClades(tree.getRoot(), currentClades);
+
+        Map<BitSet, Node> nodeOfCurrentClade = new HashMap<>();
+        for (Map.Entry<Node, BitSet> entry : currentClades.entrySet()) {
+            if (!entry.getKey().isLeaf()) {
+                nodeOfCurrentClade.put(entry.getValue(), entry.getKey());
+            }
+        }
+
+        for (int leaf = 0; leaf < leafCount; leaf++) {
+            nodeOfCluster[leaf] = tree.getNode(leaf);
+        }
+
+        // first bind every clade that already exists, which is normally almost all of them
+        List<Node> freeNodes = new ArrayList<>(currentClades.size());
+        for (Node node : currentClades.keySet()) {
+            if (!node.isLeaf()) {
+                freeNodes.add(node);
+            }
+        }
+
+        List<Integer> unboundClusters = new ArrayList<>();
+        for (int merge = 0; merge < mergeCount; merge++) {
+            int cluster = leafCount + merge;
+            Node node = nodeOfCurrentClade.get(clades[cluster]);
+
+            if (node != null && freeNodes.remove(node)) {
+                nodeOfCluster[cluster] = node;
+            } else {
+                unboundClusters.add(cluster);
+            }
+        }
+
+        // then hand the clades that did move to the nodes they overlap most
+        for (int cluster : unboundClusters) {
+            Node bestNode = null;
+            int bestOverlap = -1;
+
+            for (Node candidate : freeNodes) {
+                BitSet overlap = (BitSet) clades[cluster].clone();
+                overlap.and(currentClades.get(candidate));
+
+                if (overlap.cardinality() > bestOverlap) {
+                    bestOverlap = overlap.cardinality();
+                    bestNode = candidate;
+                }
+            }
+
+            nodeOfCluster[cluster] = bestNode;
+            freeNodes.remove(bestNode);
+        }
+
+        // Only touch the nodes that actually moved. Rewiring a node marks it and its children
+        // IS_FILTHY, and a filthy node costs the tree likelihood a full recomputation of its
+        // partials, so leaving the untouched part of the tree clean is what keeps a local change
+        // cheap.
+        for (int merge = 0; merge < mergeCount; merge++) {
+            Node node = nodeOfCluster[leafCount + merge];
+            Node left = nodeOfCluster[mergeLeft[merge]];
+            Node right = nodeOfCluster[mergeRight[merge]];
+
+            if (hasChildren(node, left, right)) {
+                if (node.getHeight() != mergeHeight[merge]) {
+                    node.setHeight(mergeHeight[merge]);
+                }
+                continue;
+            }
+
+            node.removeAllChildren(false);
+            node.setHeight(mergeHeight[merge]);
+            node.addChild(left);
+            node.addChild(right);
+            node.makeDirty(Tree.IS_FILTHY);
+        }
+
+        Node root = nodeOfCluster[2 * leafCount - 2];
+        root.setParent(null);
+        tree.setRootOnly(root);
+    }
+
+    private static boolean hasChildren(Node node, Node left, Node right) {
+        if (node.getChildCount() != 2) {
+            return false;
+        }
+
+        Node first = node.getChild(0);
+        Node second = node.getChild(1);
+        return (first == left && second == right) || (first == right && second == left);
+    }
+
+    private static BitSet collectClades(Node node, Map<Node, BitSet> clades) {
+        BitSet clade = new BitSet();
+
+        if (node.isLeaf()) {
+            clade.set(node.getNr());
+        } else {
+            for (Node child : node.getChildren()) {
+                clade.or(collectClades(child, clades));
+            }
+        }
+
+        clades.put(node, clade);
+        return clade;
+    }
+
 }
