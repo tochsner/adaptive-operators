@@ -24,14 +24,13 @@ import java.util.SplittableRandom;
 public class UpgmaRefreshOperator extends TreeOperator {
 
     public final Input<Double> concentrationInput = new Input<>("concentration", "", 100.0);
-    public final Input<Integer> affectedNodeCountInput = new Input<>("affectedCladeSize", "", 0);
+    public final Input<Integer> affectedCladeSizeInput = new Input<>("affectedCladeSize", "", 0);
     public final Input<String> selectionModeInput = new Input<>("selectionMode", "which distances get perturbed: uniform, all or clade", "clade");
     public final Input<RealScalar<?>> substitutionRateInput = new Input<>("substitutionRate", "");
     public final Input<Alignment> alignmentInput = new Input<>("alignment", "");
 
     Tree tree;
     double concentration;
-    int affectedNodeCount;
     RealScalar<?> substitutionRate;
     Alignment alignment;
 
@@ -52,16 +51,15 @@ public class UpgmaRefreshOperator extends TreeOperator {
     public void initAndValidate() {
         this.tree = this.treeInput.get();
         this.concentration = this.concentrationInput.get();
-        this.affectedNodeCount = this.affectedNodeCountInput.get() > 0
-                ? Math.min(this.affectedNodeCountInput.get(), this.tree.getLeafNodeCount())
-                : this.tree.getLeafNodeCount();
         this.substitutionRate = this.substitutionRateInput.get();
         this.alignment = this.alignmentInput.get();
 
         this.n = this.tree.getLeafNodeCount();
-        this.currentDistances = new double[n][n];
-        this.proposedDistances = new double[n][n];
-        this.selection = new UpgmaTaxonSelection(UpgmaTaxonSelection.Mode.parse(this.selectionModeInput.get()), this.tree, this.affectedNodeCount);
+        this.currentDistances = new double[this.n][this.n];
+        this.proposedDistances = new double[this.n][this.n];
+        this.selection = new UpgmaTaxonSelection(
+                UpgmaTaxonSelection.Mode.parse(this.selectionModeInput.get()), this.tree,
+                this.affectedCladeSizeInput.get());
 
         this.rng = new SplittableRandom(Randomizer.nextLong());
         this.tipDates = this.computeTipDates();
@@ -105,93 +103,52 @@ public class UpgmaRefreshOperator extends TreeOperator {
 
     @Override
     public double proposal() {
-        // sample the distance matrix conditioned on T
+        // sample a distance matrix conditioned on the current tree
 
-        this.sampleDistances(this.currentDistances, this.tree);
-        double oldTreeLogDensity = this.getConditionalLogDensity(this.currentDistances, this.tree);
-        
-        // perturb the distance matrix with
+        UpgmaSplitModel currentModel = this.createSplitModel();
+        new UpgmaDistanceSampler(currentModel, this.rng).sample(this.currentDistances);
+        double currentLogDensity = new UpgmaConditionalDensity(currentModel).logDensity(this.currentDistances);
+
+        // perturb the distance matrix
 
         this.perturbDistances(this.currentDistances, this.proposedDistances);
-        if (this.isInvalidDistanceMatrix(this.proposedDistances)) {
+        if (hasNegativeDistance(this.proposedDistances)) {
             return Double.NEGATIVE_INFINITY;
         }
 
-        // reconstruct the new tree
+        // reconstruct the tree from the perturbed distances
 
-        UpgmaClustering.Result newClustering = UpgmaClustering.cluster(this.proposedDistances);
+        UpgmaClustering.Result clustering = UpgmaClustering.cluster(this.proposedDistances);
 
         // in clade mode this rejects proposals whose clade dissolved and restores the exact heights
         // of every merge the perturbation could not have changed
-        double logSelectionRatio = this.selection.reconcile(newClustering);
+        double logSelectionRatio = this.selection.reconcile(clustering);
         if (logSelectionRatio == Double.NEGATIVE_INFINITY) {
             return Double.NEGATIVE_INFINITY;
         }
 
-        this.updateTree(this.tree, newClustering);
-        if (this.isInvalidTree(this.tree)) {
+        this.tree.startEditing(this);
+        TreeUtils.applyClustering(this.tree, clustering.mergeLeft, clustering.mergeRight, clustering.mergeHeight);
+        if (hasNegativeBranch(this.tree)) {
             return Double.NEGATIVE_INFINITY;
         }
 
-        double newTreeLogDensity = this.getConditionalLogDensity(this.proposedDistances, this.tree);
+        // the reverse move has to draw the proposed distances from the proposed tree
 
-        // compute and return the HR ratio
+        double proposedLogDensity =
+                new UpgmaConditionalDensity(this.createSplitModel()).logDensity(this.proposedDistances);
 
-        return newTreeLogDensity - oldTreeLogDensity + logSelectionRatio;
+        return proposedLogDensity - currentLogDensity + logSelectionRatio;
     }
 
     /**
-     * Returns the Monte Carlo mean of {@link #sampleDistances}, entrywise, over a hundred independent
-     * draws conditioned on the current tree. Diagnostic only: at this operator's own scale, the mean
-     * distance matrix has no particular meaning (it is not itself consistent with the tree under
-     * UPGMA), but it is a cheap way to sanity-check that the sampler's draws are centered where the
-     * merge distances say they should be.
-     */
-    private double[][] getMeanDistance() {
-        double[][] mean = new double[this.n][this.n];
-        double[][] sample = new double[this.n][this.n];
-
-        int draws = 100;
-        for (int k = 0; k < draws; k++) {
-            this.sampleDistances(sample, this.tree);
-            for (int i = 0; i < this.n; i++) {
-                for (int j = 0; j < this.n; j++) {
-                    mean[i][j] += sample[i][j];
-                }
-            }
-
-            System.out.println(sample[1][2] + "\t" + sample[1][3] + "\t" + sample[1][4] + "\t|\t" + sample[2][3] + "\t" + sample[3][4] +  "\t|\t" + sample[3][4]);
-        }
-
-        for (int i = 0; i < this.n; i++) {
-            for (int j = 0; j < this.n; j++) {
-                mean[i][j] /= draws;
-            }
-        }
-
-        System.out.println("-------------------------------------------------------");
-        System.out.println(mean[1][2] + "\t" + mean[1][3] + "\t" + mean[1][4] + "\t|\t" + mean[2][3] + "\t" + mean[2][4] +  "\t|\t" + mean[3][4]);
-        System.out.println(substitutionDistances[1][2] + "\t" + substitutionDistances[1][3] + "\t" + substitutionDistances[1][4] + "\t|\t" + substitutionDistances[2][3] + "\t" + substitutionDistances[2][4] +  "\t|\t" + substitutionDistances[3][4]);
-
-        return mean;
-    }
-
-    /**
-     * Samples a new distance matrix conditioned on the given tree. The distances correspond to a tree with extant
+     * Returns a snapshot of the current tree and substitution rate, shared by the distance sampler
+     * and the conditional density. The distances it describes correspond to a tree with extant
      * branches extended to the present.
      */
-    private void sampleDistances(double[][] distances, Tree tree) {
-        UpgmaDistanceSampler sampler = new UpgmaDistanceSampler(tree, this.substitutionDistances, this.tipDates, this.substitutionRate, this.concentration, this.rng);
-        sampler.sample(distances);
-    }
-
-    /**
-     * Returns the conditional density of the distances conditioned on the tree (including the Jacobian correction).
-     * The distances correspond to a tree with extant branches extended to the present.
-     */
-    private double getConditionalLogDensity(double[][] distances, Tree tree) {
-        UpgmaConditionalDensity density = new UpgmaConditionalDensity(tree, this.substitutionDistances, this.tipDates, this.substitutionRate, this.concentration);
-        return density.logDensity(distances);
+    private UpgmaSplitModel createSplitModel() {
+        return new UpgmaSplitModel(
+                this.tree, this.substitutionDistances, this.tipDates, this.substitutionRate, this.concentration);
     }
 
     /**
@@ -218,22 +175,13 @@ public class UpgmaRefreshOperator extends TreeOperator {
     }
 
     /**
-     * Runs UPGMA clustering of the distance matrix. The distances correspond to a tree with
-     * extant branches extended to the present, the resulting UPGMA tree gets pruned.
-     * This might lead to negative extant branch lengths.
+     * Returns true if any distance is negative, which the perturbation can produce and UPGMA cannot
+     * interpret.
      */
-    private void updateTree(Tree tree, UpgmaClustering.Result clustering) {
-        this.tree.startEditing(this);
-        TreeUtils.applyClustering(tree, clustering.mergeLeft, clustering.mergeRight, clustering.mergeHeight);
-    }
-
-    /**
-     * Returns true if there are negative distances.
-     */
-    private boolean isInvalidDistanceMatrix(double[][] distances) {
-        for (int i = 0; i < this.n; i++) {
-            for (int j = 0; j < this.n; j++) {
-                if (distances[i][j] < 0.0) {
+    private static boolean hasNegativeDistance(double[][] distances) {
+        for (double[] row : distances) {
+            for (double d : row) {
+                if (d < 0.0) {
                     return true;
                 }
             }
@@ -242,9 +190,11 @@ public class UpgmaRefreshOperator extends TreeOperator {
     }
 
     /**
-     * Returns true if the tree has negative branch lengths.
+     * Returns true if the tree has negative branch lengths. The sampled distances describe a tree
+     * with extant branches extended to the present, so pruning the reconstructed tree back to the
+     * sampling times can push a branch below zero.
      */
-    private boolean isInvalidTree(Tree tree) {
+    private static boolean hasNegativeBranch(Tree tree) {
         for (Node node : tree.getNodesAsArray()) {
             if (!node.isRoot() && node.getLength() < 0.0) {
                 return true;
