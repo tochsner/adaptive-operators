@@ -8,7 +8,14 @@ import java.util.SplittableRandom;
  *
  * <p>Every split of a cluster X into A and B draws how much of each other active cluster's slack
  * against X falls to A and how much to B. Once every internal node is split back down to its
- * leaves, all pairwise slacks are determined and {@code d(i, j) = d(1) + s_1(i, j)}.
+ * leaves, every pairwise distance is determined.
+ *
+ * <p>Slacks are held as the cluster distances they stand for rather than as slacks. Since
+ * {@code s_r(U, V) = d(U, V) - d(r)}, the two carry the same information, but a pair the split does
+ * not touch keeps the distance it already had, where its slack would have had to be walked forward
+ * by {@code delta_r} at every remaining step. That turns the whole backward pass into the mirror
+ * image of {@link UpgmaClustering}: the same dense working matrix over active clusters, splitting
+ * where the clustering merges, with A keeping X's slot and B taking a new one at the end.
  *
  * <p>The matrix is indexed by tree leaf node number, so it can go straight to
  * {@code TreeUtils.applyClustering}.
@@ -27,7 +34,7 @@ public class UpgmaDistanceSampler {
         this.rng = rng;
     }
 
-    /** Draws slacks backwards from the root and writes the distance matrix into {@code distances}. */
+    /** Draws the distances backwards from the root and writes them into {@code distances}. */
     public void sample(double[][] distances) {
         int n = this.model.leafCount();
         for (int i = 0; i < n; i++) {
@@ -37,42 +44,63 @@ public class UpgmaDistanceSampler {
             return;
         }
 
-        // slack[a][b], for a < b, holds s_{r+1}(a, b) for the clusters active at the current backward
-        // step, indexed by tree node number. The root's children start out with a slack of 0.
-        double[][] slack = new double[2 * n - 1][2 * n - 1];
+        // dense working matrix over the active clusters, slot-indexed like UpgmaClustering's
+        double[] d = new double[n * n];
+        int[] slotOf = new int[2 * n - 1];
+        int[] clusterOf = new int[n];
+
+        // the root's children are the only clusters to start with, and d(n - 1) apart
+        int[] initial = this.model.initialClusters();
+        for (int slot = 0; slot < 2; slot++) {
+            slotOf[initial[slot]] = slot;
+            clusterOf[slot] = initial[slot];
+        }
+        int activeCount = 2;
+        double rootDistance = this.model.mergeDistance(this.model.mergeCount());
+        d[0 * n + 1] = rootDistance;
+        d[1 * n + 0] = rootDistance;
 
         for (UpgmaSplitModel.Split split : this.model.splits()) {
-            double delta = this.model.mergeDistance(split.r() + 1) - this.model.mergeDistance(split.r());
+            double dr = this.model.mergeDistance(split.r());
+            int slotA = slotOf[split.nodeNr()];
+            int slotB = activeCount++;
 
-            // unaffected pairs: s_r(U, V) = s_{r+1}(U, V) + delta
-            for (int i = 0; i < split.active().length; i++) {
-                for (int j = i + 1; j < split.active().length; j++) {
-                    int u = split.active()[i];
-                    int v = split.active()[j];
-                    setSlack(slack, u, v, getSlack(slack, u, v) + delta);
-                }
-            }
+            int[] active = split.active();
+            for (int i = 0; i < active.length; i++) {
+                int slotV = slotOf[active[i]];
 
-            // affected pairs: split every other active cluster's slack against X between A and B
-            for (int v : split.active()) {
-                double base = split.size() * (getSlack(slack, v, split.nodeNr()) + delta);
+                // s_{r+1}(V, X) + delta_r = d(V, X) - d(r), so the slack to divide is read directly
+                double base = split.size() * (d[slotV * n + slotA] - dr);
 
-                double mean = this.model.betaMean(v, split);
+                double mean = this.model.betaMean(split, i);
                 double p = this.sampleBeta(this.model.alpha(mean), this.model.beta(mean));
 
-                setSlack(slack, v, split.leftNr(), p * base / split.leftSize());
-                setSlack(slack, v, split.rightNr(), (1.0 - p) * base / split.rightSize());
+                double dVA = dr + p * base / split.leftSize();
+                double dVB = dr + (1.0 - p) * base / split.rightSize();
+
+                // A takes X's slot, so writing d(V, A) overwrites the d(V, X) just read
+                d[slotV * n + slotA] = dVA;
+                d[slotA * n + slotV] = dVA;
+                d[slotV * n + slotB] = dVB;
+                d[slotB * n + slotV] = dVB;
             }
 
-            setSlack(slack, split.leftNr(), split.rightNr(), 0.0);
+            // A and B are what merged at r, so they sit exactly d(r) apart
+            d[slotA * n + slotB] = dr;
+            d[slotB * n + slotA] = dr;
+
+            slotOf[split.leftNr()] = slotA;
+            slotOf[split.rightNr()] = slotB;
+            clusterOf[slotA] = split.leftNr();
+            clusterOf[slotB] = split.rightNr();
         }
 
-        double base = this.model.mergeDistance(1);
+        // every cluster is a single leaf by now, so the working matrix is D up to the slot ordering
         for (int i = 0; i < n; i++) {
             for (int j = i + 1; j < n; j++) {
-                double d = base + getSlack(slack, i, j);
-                distances[i][j] = d;
-                distances[j][i] = d;
+                double value = d[i * n + j];
+                distances[clusterOf[i]][clusterOf[j]] = value;
+                distances[clusterOf[j]][clusterOf[i]] = value;
             }
         }
     }
@@ -105,18 +133,6 @@ public class UpgmaDistanceSampler {
             if (u < 1.0 - 0.0331 * x2 * x2 || Math.log(u) < 0.5 * x2 + d * (1.0 - v + Math.log(v))) {
                 return d * v;
             }
-        }
-    }
-
-    private static double getSlack(double[][] slack, int a, int b) {
-        return a < b ? slack[a][b] : slack[b][a];
-    }
-
-    private static void setSlack(double[][] slack, int a, int b, double value) {
-        if (a < b) {
-            slack[a][b] = value;
-        } else {
-            slack[b][a] = value;
         }
     }
 }
