@@ -18,76 +18,88 @@ import java.util.SplittableRandom;
  * where the clustering merges, with A keeping X's slot and B taking a new one at the end.
  *
  * <p>The matrix is indexed by tree leaf node number, so it can go straight to
- * {@code TreeUtils.applyClustering}.
+ * {@code TreeUtils.applyClustering}. A sampler holds its working memory, so it is built once for a
+ * leaf count and reused across models.
  */
 public class UpgmaDistanceSampler {
 
-    private final UpgmaSplitModel model;
     private final SplittableRandom rng;
+
+    // dense working matrix over the active clusters, slot-indexed like UpgmaClustering's
+    private final double[] d;
+    private final int[] slotOf;
+    private final int[] clusterOf;
 
     /**
      * @param rng private generator for the Beta draws, seeded once from {@code Randomizer} so runs
      *            stay reproducible without paying its per-call lock
      */
-    public UpgmaDistanceSampler(UpgmaSplitModel model, SplittableRandom rng) {
-        this.model = model;
+    public UpgmaDistanceSampler(int leafCount, SplittableRandom rng) {
         this.rng = rng;
+        this.d = new double[leafCount * leafCount];
+        this.slotOf = new int[2 * leafCount - 1];
+        this.clusterOf = new int[leafCount];
     }
 
     /** Draws the distances backwards from the root and writes them into {@code distances}. */
-    public void sample(double[][] distances) {
-        int n = this.model.leafCount();
+    public void sample(UpgmaSplitModel model, double[][] distances) {
+        int n = model.leafCount();
         for (int i = 0; i < n; i++) {
             distances[i][i] = 0.0;
         }
-        if (this.model.mergeCount() == 0) {
+        if (model.mergeCount() == 0) {
             return;
         }
 
-        // dense working matrix over the active clusters, slot-indexed like UpgmaClustering's
-        double[] d = new double[n * n];
-        int[] slotOf = new int[2 * n - 1];
-        int[] clusterOf = new int[n];
+        double[] d = this.d;
+        int[] slotOf = this.slotOf;
+        int[] clusterOf = this.clusterOf;
+        double concentration = model.concentration();
 
         // the root's children are the only clusters to start with, and d(n - 1) apart
-        int[] initial = this.model.initialClusters();
+        int[] initial = model.initialClusters();
         for (int slot = 0; slot < 2; slot++) {
             slotOf[initial[slot]] = slot;
             clusterOf[slot] = initial[slot];
         }
         int activeCount = 2;
-        double rootDistance = this.model.mergeDistance(this.model.mergeCount());
+        double rootDistance = model.mergeDistance(model.mergeCount());
         d[0 * n + 1] = rootDistance;
         d[1 * n + 0] = rootDistance;
 
-        for (UpgmaSplitModel.Split split : this.model.splits()) {
-            double dr = this.model.mergeDistance(split.r());
+        for (UpgmaSplitModel.Split split : model.splits()) {
+            double dr = model.mergeDistance(split.r());
             int slotA = slotOf[split.nodeNr()];
             int slotB = activeCount++;
+            int rowA = slotA * n;
+            int rowB = slotB * n;
+            double size = split.size();
+            double leftSize = split.leftSize();
+            double rightSize = split.rightSize();
 
             int[] active = split.active();
             for (int i = 0; i < active.length; i++) {
                 int slotV = slotOf[active[i]];
 
                 // s_{r+1}(V, X) + delta_r = d(V, X) - d(r), so the slack to divide is read directly
-                double base = split.size() * (d[slotV * n + slotA] - dr);
+                double base = size * (d[rowA + slotV] - dr);
 
-                double mean = this.model.betaMean(split, i);
-                double p = this.sampleBeta(this.model.alpha(mean), this.model.beta(mean));
+                double mean = model.betaMean(split, i);
+                double p = this.sampleBeta(concentration * mean, concentration * (1.0 - mean));
 
-                double dVA = dr + p * base / split.leftSize();
-                double dVB = dr + (1.0 - p) * base / split.rightSize();
+                double dVA = dr + p * base / leftSize;
+                double dVB = dr + (1.0 - p) * base / rightSize;
 
                 // A takes X's slot, so writing d(V, A) overwrites the d(V, X) just read
+                d[rowA + slotV] = dVA;
                 d[slotV * n + slotA] = dVA;
-                d[slotA * n + slotV] = dVA;
+                d[rowB + slotV] = dVB;
                 d[slotV * n + slotB] = dVB;
-                d[slotB * n + slotV] = dVB;
             }
 
             // A and B are what merged at r, so they sit exactly d(r) apart
-            d[slotA * n + slotB] = dr;
-            d[slotB * n + slotA] = dr;
+            d[rowA + slotB] = dr;
+            d[rowB + slotA] = dr;
 
             slotOf[split.leftNr()] = slotA;
             slotOf[split.rightNr()] = slotB;
@@ -97,9 +109,10 @@ public class UpgmaDistanceSampler {
 
         // every cluster is a single leaf by now, so the working matrix is D up to the slot ordering
         for (int i = 0; i < n; i++) {
+            double[] row = distances[clusterOf[i]];
             for (int j = i + 1; j < n; j++) {
                 double value = d[i * n + j];
-                distances[clusterOf[i]][clusterOf[j]] = value;
+                row[clusterOf[j]] = value;
                 distances[clusterOf[j]][clusterOf[i]] = value;
             }
         }

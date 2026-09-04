@@ -39,9 +39,9 @@ class UpgmaConditionalDensityTest {
 
             // a matrix the density is actually meant to score, i.e. one that clusters back to the tree
             double[][] distances = new double[leafCount][leafCount];
-            new UpgmaDistanceSampler(model, rng).sample(distances);
+            new UpgmaDistanceSampler(leafCount, rng).sample(model, distances);
 
-            assertThat(new UpgmaConditionalDensity(model).logDensity(distances))
+            assertThat(new UpgmaConditionalDensity(leafCount).logDensity(model, distances))
                     .as("leafCount = " + leafCount)
                     .isCloseTo(reference(model, UpgmaFixtures.clades(tree), distances), within(1e-9));
         }

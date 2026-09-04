@@ -4,11 +4,9 @@ import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import beast.base.spec.type.RealScalar;
 
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
-import java.util.Deque;
 import java.util.List;
 
 /**
@@ -24,8 +22,8 @@ import java.util.List;
  */
 public class UpgmaSplitModel {
 
-    // keeps the Beta mean away from 0 and 1, so neither shape parameter can collapse
-    private static final double MIN_MEAN = 0.1;
+    /** Keeps the Beta mean away from 0 and 1, so neither shape parameter can collapse. */
+    public static final double MIN_MEAN = 0.1;
 
     // the smallest relative excess the closer child keeps, so the two scores stay distinguishable
     // even when the data places V inside the split
@@ -46,9 +44,6 @@ public class UpgmaSplitModel {
 
     private final int n;
     private final double concentration;
-    private final double[][] substitutionDistances;
-    private final double[] tipDates;
-    private final double substitutionRate;
 
     /** {@code d(r) = 2 * height} of the r-th merge, 1-indexed; index 0 is unused. */
     private final double[] mergeDistance;
@@ -67,10 +62,16 @@ public class UpgmaSplitModel {
     public UpgmaSplitModel(
             Tree tree, double[][] substitutionDistances, double[] tipDates, RealScalar<?> substitutionRate,
             double concentration) {
+        this(tree, leafScores(substitutionDistances, tipDates, substitutionRate.get()), concentration,
+                new double[tree.getLeafNodeCount() * tree.getLeafNodeCount()]);
+    }
+
+    /**
+     * @param leafScores flat {@code n x n} matrix of {@link #leafScores}, indexed by leaf node number
+     * @param scratch    working memory of at least {@code n * n} doubles, only used during construction
+     */
+    public UpgmaSplitModel(Tree tree, double[] leafScores, double concentration, double[] scratch) {
         this.n = tree.getLeafNodeCount();
-        this.substitutionDistances = substitutionDistances;
-        this.tipDates = tipDates;
-        this.substitutionRate = substitutionRate.get();
         this.concentration = concentration;
 
         Node[] mergeOrder = internalNodesByAscendingHeight(tree);
@@ -94,7 +95,28 @@ public class UpgmaSplitModel {
         int meanCount = this.splits.isEmpty() ? 0
                 : this.splits.getLast().meanOffset() + this.splits.getLast().active().length;
         this.betaMean = new double[meanCount];
-        this.computeBetaMeans();
+        this.computeBetaMeans(leafScores, scratch);
+    }
+
+    /**
+     * The leaf-level scores {@code S(i, j) = d_sub(i, j) / rate + tipDate(i) + tipDate(j)} the Beta
+     * means are built from, as a flat row-major {@code n x n} matrix with a zero diagonal. They only
+     * change with the substitution rate, so a caller can keep them across models.
+     */
+    public static double[] leafScores(double[][] substitutionDistances, double[] tipDates, double substitutionRate) {
+        int n = tipDates.length;
+        double[] scores = new double[n * n];
+        for (int i = 0; i < n; i++) {
+            double[] row = substitutionDistances[i];
+            double tipDate = tipDates[i];
+            for (int j = i + 1; j < n; j++) {
+                double score = row[j] / substitutionRate + tipDate + tipDates[j];
+                scores[i * n + j] = score;
+                scores[j * n + i] = score;
+            }
+        }
+        // the diagonal is never a cluster pair, so it stays out of the averages
+        return scores;
     }
 
     public int leafCount() {
@@ -103,6 +125,10 @@ public class UpgmaSplitModel {
 
     public int mergeCount() {
         return this.n - 1;
+    }
+
+    public double concentration() {
+        return this.concentration;
     }
 
     /** {@code d(r) = 2 * height(r)} of the r-th merge, 1-indexed. */
@@ -166,13 +192,14 @@ public class UpgmaSplitModel {
         Node[] postOrder = new Node[tree.getNodeCount()];
         int count = 0;
 
-        Deque<Node> pending = new ArrayDeque<>();
-        pending.push(tree.getRoot());
-        while (!pending.isEmpty()) {
-            Node node = pending.pop();
+        Node[] pending = new Node[tree.getNodeCount()];
+        int pendingCount = 0;
+        pending[pendingCount++] = tree.getRoot();
+        while (pendingCount > 0) {
+            Node node = pending[--pendingCount];
             postOrder[count++] = node;
-            for (Node child : node.getChildren()) {
-                pending.push(child);
+            for (int c = 0; c < node.getChildCount(); c++) {
+                pending[pendingCount++] = node.getChild(c);
             }
         }
 
@@ -182,8 +209,8 @@ public class UpgmaSplitModel {
                 cladeSize[node.getNr()] = 1;
             } else {
                 int size = 0;
-                for (Node child : node.getChildren()) {
-                    size += cladeSize[child.getNr()];
+                for (int c = 0; c < node.getChildCount(); c++) {
+                    size += cladeSize[node.getChild(c).getNr()];
                 }
                 cladeSize[node.getNr()] = size;
             }
@@ -197,26 +224,35 @@ public class UpgmaSplitModel {
             return List.of();
         }
 
-        // the clusters right after every merge but the last, i.e. P(n - 2): the root's children
-        List<Integer> active = new ArrayList<>();
-        active.add(this.initialClusters[0]);
-        active.add(this.initialClusters[1]);
+        // the clusters right after every merge but the last, i.e. P(n - 2): the root's children.
+        // the list keeps its insertion order, so removing X shifts everything after it down
+        int[] active = new int[this.n];
+        active[0] = this.initialClusters[0];
+        active[1] = this.initialClusters[1];
+        int activeCount = 2;
 
         List<Split> splits = new ArrayList<>(mergeCount - 1);
         int meanOffset = 0;
         for (int r = mergeCount - 1; r >= 1; r--) {
             Node x = mergeOrder[r - 1];
+            int nodeNr = x.getNr();
             int leftNr = x.getChild(0).getNr();
             int rightNr = x.getChild(1).getNr();
 
-            active.remove(Integer.valueOf(x.getNr()));
-            splits.add(new Split(
-                    r, x.getNr(), leftNr, rightNr, this.cladeSize(leftNr), this.cladeSize(rightNr),
-                    active.stream().mapToInt(Integer::intValue).toArray(), meanOffset));
-            meanOffset += active.size();
+            int position = 0;
+            while (active[position] != nodeNr) {
+                position++;
+            }
+            System.arraycopy(active, position + 1, active, position, activeCount - position - 1);
+            activeCount--;
 
-            active.add(leftNr);
-            active.add(rightNr);
+            splits.add(new Split(
+                    r, nodeNr, leftNr, rightNr, this.cladeSize(leftNr), this.cladeSize(rightNr),
+                    Arrays.copyOf(active, activeCount), meanOffset));
+            meanOffset += activeCount;
+
+            active[activeCount++] = leftNr;
+            active[activeCount++] = rightNr;
         }
 
         return splits;
@@ -233,68 +269,48 @@ public class UpgmaSplitModel {
      *
      * <p>Just before merge r the working matrix holds {@code S(V, A)} and {@code S(V, B)} for every
      * cluster active at that point, and {@code S(A, B)} is the entry being merged over: the three
-     * scores a split's Beta mean is built from.
+     * scores a split's Beta mean is built from. Every leaf starts in its own slot and X takes A's
+     * slot; B's slot simply goes dead, since the split lists the clusters still active and nothing
+     * ever scans the whole matrix.
      */
-    private void computeBetaMeans() {
+    private void computeBetaMeans(double[] leafScores, double[] score) {
         if (this.splits.isEmpty()) {
             return;
         }
 
-        double[] score = new double[this.n * this.n];
-        int[] slotOf = new int[2 * this.n - 1];
-        int[] clusterOf = new int[this.n];
-        for (int leaf = 0; leaf < this.n; leaf++) {
+        int n = this.n;
+        System.arraycopy(leafScores, 0, score, 0, n * n);
+        int[] slotOf = new int[2 * n - 1];
+        for (int leaf = 0; leaf < n; leaf++) {
             slotOf[leaf] = leaf;
-            clusterOf[leaf] = leaf;
-            for (int other = 0; other < this.n; other++) {
-                score[leaf * this.n + other] =
-                        this.substitutionDistances[leaf][other] / this.substitutionRate
-                                + this.tipDates[leaf] + this.tipDates[other];
-            }
-            // the diagonal is never a cluster pair, so it stays out of the averages
-            score[leaf * this.n + leaf] = 0.0;
         }
 
         // the splits run from the root down, so the merges are that list read backwards
-        int activeCount = this.n;
         for (int index = this.splits.size() - 1; index >= 0; index--) {
             Split split = this.splits.get(index);
             int slotA = slotOf[split.leftNr()];
             int slotB = slotOf[split.rightNr()];
+            int rowA = slotA * n;
+            int rowB = slotB * n;
+            int leftSize = split.leftSize();
+            int rightSize = split.rightSize();
+            int size = leftSize + rightSize;
 
-            double splitScore = score[slotA * this.n + slotB];
+            double splitScore = score[rowA + slotB];
             int[] active = split.active();
+            int offset = split.meanOffset();
             for (int i = 0; i < active.length; i++) {
                 int slotV = slotOf[active[i]];
-                this.betaMean[split.meanOffset() + i] = mean(
-                        score[slotV * this.n + slotA], score[slotV * this.n + slotB], splitScore,
-                        split.leftSize(), split.rightSize());
-            }
+                double scoreVA = score[rowA + slotV];
+                double scoreVB = score[rowB + slotV];
+                this.betaMean[offset + i] = mean(scoreVA, scoreVB, splitScore, leftSize, rightSize);
 
-            // fold B into A's slot, which now stands for X
-            for (int k = 0; k < activeCount; k++) {
-                if (k == slotA || k == slotB) {
-                    continue;
-                }
-                double updated = (split.leftSize() * score[slotA * this.n + k]
-                        + split.rightSize() * score[slotB * this.n + k]) / split.size();
-                score[slotA * this.n + k] = updated;
-                score[k * this.n + slotA] = updated;
+                // fold B into A's slot, which now stands for X
+                double updated = (leftSize * scoreVA + rightSize * scoreVB) / size;
+                score[rowA + slotV] = updated;
+                score[slotV * n + slotA] = updated;
             }
             slotOf[split.nodeNr()] = slotA;
-            clusterOf[slotA] = split.nodeNr();
-
-            // compact away B's now-stale slot by moving the last active slot into it
-            int last = activeCount - 1;
-            if (slotB != last) {
-                for (int k = 0; k < last; k++) {
-                    score[slotB * this.n + k] = score[last * this.n + k];
-                    score[k * this.n + slotB] = score[k * this.n + last];
-                }
-                slotOf[clusterOf[last]] = slotB;
-                clusterOf[slotB] = clusterOf[last];
-            }
-            activeCount--;
         }
     }
 

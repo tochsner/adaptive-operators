@@ -41,6 +41,15 @@ public class UpgmaRefreshOperator extends TreeOperator {
 
     UpgmaTaxonSelection selection;
     UpgmaDistancePerturbation perturbation;
+    UpgmaDistanceSampler sampler;
+    UpgmaConditionalDensity density;
+
+    // the leaf scores every split model starts from, rebuilt only when the substitution rate moves
+    double[] leafScores;
+    double leafScoresRate = Double.NaN;
+
+    // working memory the split models are built in
+    double[] scratch;
 
     SplittableRandom rng;
 
@@ -60,6 +69,9 @@ public class UpgmaRefreshOperator extends TreeOperator {
                 this.affectedCladeSizeInput.get());
         this.perturbation = new UpgmaDistancePerturbation(
                 UpgmaDistancePerturbation.Mode.parse(this.perturbationModeInput.get()), this.selection, this.rng);
+        this.sampler = new UpgmaDistanceSampler(this.n, this.rng);
+        this.density = new UpgmaConditionalDensity(this.n);
+        this.scratch = new double[this.n * this.n];
 
         this.tipDates = this.computeTipDates();
         this.substitutionDistances = this.computeSubstitutionDistances(this.alignment);
@@ -100,8 +112,8 @@ public class UpgmaRefreshOperator extends TreeOperator {
         // sample a distance matrix conditioned on the current tree
 
         UpgmaSplitModel currentModel = this.createSplitModel();
-        new UpgmaDistanceSampler(currentModel, this.rng).sample(this.currentDistances);
-        double currentLogDensity = new UpgmaConditionalDensity(currentModel).logDensity(this.currentDistances);
+        this.sampler.sample(currentModel, this.currentDistances);
+        double currentLogDensity = this.density.logDensity(currentModel, this.currentDistances);
 
         // perturb the distance matrix
 
@@ -129,8 +141,7 @@ public class UpgmaRefreshOperator extends TreeOperator {
 
         // the reverse move has to draw the proposed distances from the proposed tree
 
-        double proposedLogDensity =
-                new UpgmaConditionalDensity(this.createSplitModel()).logDensity(this.proposedDistances);
+        double proposedLogDensity = this.density.logDensity(this.createSplitModel(), this.proposedDistances);
 
         return proposedLogDensity - currentLogDensity + logPerturbationRatio + logSelectionRatio;
     }
@@ -140,8 +151,12 @@ public class UpgmaRefreshOperator extends TreeOperator {
      * The distances it describes correspond to a tree with extant branches extended to the present.
      */
     private UpgmaSplitModel createSplitModel() {
-        return new UpgmaSplitModel(
-                this.tree, this.substitutionDistances, this.tipDates, this.substitutionRate, this.concentration);
+        double rate = this.substitutionRate.get();
+        if (rate != this.leafScoresRate) {
+            this.leafScores = UpgmaSplitModel.leafScores(this.substitutionDistances, this.tipDates, rate);
+            this.leafScoresRate = rate;
+        }
+        return new UpgmaSplitModel(this.tree, this.leafScores, this.concentration, this.scratch);
     }
 
     /** Returns true if any distance is negative, which UPGMA cannot interpret. */

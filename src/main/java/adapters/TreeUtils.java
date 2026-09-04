@@ -689,68 +689,88 @@ public class TreeUtils {
             throw new IllegalArgumentException("expected " + mergeCount + " merges");
         }
 
-        BitSet[] clades = new BitSet[2 * leafCount - 1];
-        for (int leaf = 0; leaf < leafCount; leaf++) {
-            clades[leaf] = new BitSet(leafCount);
-            clades[leaf].set(leaf);
-        }
-        for (int merge = 0; merge < mergeCount; merge++) {
-            BitSet clade = (BitSet) clades[mergeLeft[merge]].clone();
-            clade.or(clades[mergeRight[merge]]);
-            clades[leafCount + merge] = clade;
-        }
+        // number the leaves in depth-first order, so that every clade of the current tree is a
+        // contiguous range of leaf positions. A cluster then is an existing clade exactly when its
+        // leaves are contiguous too, which its position range and size tell without any leaf sets.
+        Node[] nodes = tree.getNodesAsArray();
+        int nodeCount = nodes.length;
+        int[] rangeStart = new int[nodeCount];
+        int[] rangeEnd = new int[nodeCount];
+        int[] position = new int[leafCount];
+        numberLeavesDepthFirst(tree.getRoot(), rangeStart, rangeEnd, position);
 
-        Map<Node, BitSet> currentClades = new HashMap<>();
-        collectClades(tree.getRoot(), currentClades);
-
-        Map<BitSet, Node> nodeOfCurrentClade = new HashMap<>();
-        for (Map.Entry<Node, BitSet> entry : currentClades.entrySet()) {
-            if (!entry.getKey().isLeaf()) {
-                nodeOfCurrentClade.put(entry.getValue(), entry.getKey());
+        // every node's range is distinct, so start and end together name it
+        Map<Long, Node> nodeOfRange = new HashMap<>(2 * nodeCount);
+        for (Node node : nodes) {
+            if (!node.isLeaf()) {
+                nodeOfRange.put(rangeKey(rangeStart[node.getNr()], rangeEnd[node.getNr()]), node);
             }
         }
 
+        int[] clusterStart = new int[2 * leafCount - 1];
+        int[] clusterEnd = new int[2 * leafCount - 1];
+        int[] clusterSize = new int[2 * leafCount - 1];
         for (int leaf = 0; leaf < leafCount; leaf++) {
+            clusterStart[leaf] = position[leaf];
+            clusterEnd[leaf] = position[leaf] + 1;
+            clusterSize[leaf] = 1;
             nodeOfCluster[leaf] = tree.getNode(leaf);
         }
 
         // first bind every clade that already exists, which is normally almost all of them
-        List<Node> freeNodes = new ArrayList<>(currentClades.size());
-        for (Node node : currentClades.keySet()) {
-            if (!node.isLeaf()) {
-                freeNodes.add(node);
-            }
-        }
-
+        boolean[] bound = new boolean[nodeCount];
         List<Integer> unboundClusters = new ArrayList<>();
         for (int merge = 0; merge < mergeCount; merge++) {
             int cluster = leafCount + merge;
-            Node node = nodeOfCurrentClade.get(clades[cluster]);
+            int left = mergeLeft[merge];
+            int right = mergeRight[merge];
+            clusterStart[cluster] = Math.min(clusterStart[left], clusterStart[right]);
+            clusterEnd[cluster] = Math.max(clusterEnd[left], clusterEnd[right]);
+            clusterSize[cluster] = clusterSize[left] + clusterSize[right];
 
-            if (node != null && freeNodes.remove(node)) {
+            Node node = null;
+            if (clusterEnd[cluster] - clusterStart[cluster] == clusterSize[cluster]) {
+                node = nodeOfRange.get(rangeKey(clusterStart[cluster], clusterEnd[cluster]));
+            }
+
+            if (node != null && !bound[node.getNr()]) {
+                bound[node.getNr()] = true;
                 nodeOfCluster[cluster] = node;
             } else {
                 unboundClusters.add(cluster);
             }
         }
 
-        // then hand the clades that did move to the nodes they overlap most
-        for (int cluster : unboundClusters) {
-            Node bestNode = null;
-            int bestOverlap = -1;
-
-            for (Node candidate : freeNodes) {
-                BitSet overlap = (BitSet) clades[cluster].clone();
-                overlap.and(currentClades.get(candidate));
-
-                if (overlap.cardinality() > bestOverlap) {
-                    bestOverlap = overlap.cardinality();
-                    bestNode = candidate;
+        // then hand the clades that did move to the nodes they overlap most. Only these need their
+        // leaf sets spelled out, over leaf positions so a node's clade is a plain range of bits
+        if (!unboundClusters.isEmpty()) {
+            List<Node> freeNodes = new ArrayList<>(unboundClusters.size());
+            for (Node node : nodes) {
+                if (!node.isLeaf() && !bound[node.getNr()]) {
+                    freeNodes.add(node);
                 }
             }
 
-            nodeOfCluster[cluster] = bestNode;
-            freeNodes.remove(bestNode);
+            BitSet[] members = new BitSet[2 * leafCount - 1];
+            for (int cluster : unboundClusters) {
+                BitSet clusterMembers = clusterMembers(cluster, leafCount, mergeLeft, mergeRight, position, members);
+
+                Node bestNode = null;
+                int bestOverlap = -1;
+                for (Node candidate : freeNodes) {
+                    int start = rangeStart[candidate.getNr()];
+                    int end = rangeEnd[candidate.getNr()];
+                    int overlap = clusterMembers.get(start, end).cardinality();
+
+                    if (overlap > bestOverlap) {
+                        bestOverlap = overlap;
+                        bestNode = candidate;
+                    }
+                }
+
+                nodeOfCluster[cluster] = bestNode;
+                freeNodes.remove(bestNode);
+            }
         }
 
         // Only touch the nodes that actually moved. Rewiring a node marks it and its children
@@ -781,6 +801,94 @@ public class TreeUtils {
         tree.setRootOnly(root);
     }
 
+    /**
+     * Numbers the leaves in depth-first order and records every node's range of leaf positions as
+     * {@code [rangeStart, rangeEnd)}. The walk is iterative, since a tree of a few thousand taxa can
+     * be deep enough to overflow the stack.
+     */
+    private static void numberLeavesDepthFirst(Node root, int[] rangeStart, int[] rangeEnd, int[] position) {
+        Node[] postOrder = new Node[rangeStart.length];
+        int count = 0;
+
+        Node[] pending = new Node[rangeStart.length];
+        int pendingCount = 0;
+        pending[pendingCount++] = root;
+        while (pendingCount > 0) {
+            Node node = pending[--pendingCount];
+            postOrder[count++] = node;
+            for (int c = node.getChildCount() - 1; c >= 0; c--) {
+                pending[pendingCount++] = node.getChild(c);
+            }
+        }
+
+        // the pre-order above visits the leaves in depth-first order
+        int next = 0;
+        for (int i = 0; i < count; i++) {
+            Node node = postOrder[i];
+            if (node.isLeaf()) {
+                position[node.getNr()] = next++;
+            }
+        }
+
+        for (int i = count - 1; i >= 0; i--) {
+            Node node = postOrder[i];
+            if (node.isLeaf()) {
+                rangeStart[node.getNr()] = position[node.getNr()];
+                rangeEnd[node.getNr()] = position[node.getNr()] + 1;
+            } else {
+                rangeStart[node.getNr()] = rangeStart[node.getChild(0).getNr()];
+                rangeEnd[node.getNr()] = rangeEnd[node.getChild(node.getChildCount() - 1).getNr()];
+            }
+        }
+    }
+
+    private static long rangeKey(int start, int end) {
+        return ((long) start << 32) | end;
+    }
+
+    /**
+     * The leaf positions under a cluster, memoised in {@code members} so shared subclusters are
+     * built once. The walk is iterative, since a caterpillar clustering nests as deep as it is wide.
+     */
+    private static BitSet clusterMembers(
+            int cluster, int leafCount, int[] mergeLeft, int[] mergeRight, int[] position, BitSet[] members) {
+        int[] pending = new int[2 * leafCount];
+        int pendingCount = 0;
+        pending[pendingCount++] = cluster;
+        while (pendingCount > 0) {
+            int current = pending[--pendingCount];
+            if (members[current] != null) {
+                continue;
+            }
+
+            if (current < leafCount) {
+                BitSet leaf = new BitSet(leafCount);
+                leaf.set(position[current]);
+                members[current] = leaf;
+                continue;
+            }
+
+            int left = mergeLeft[current - leafCount];
+            int right = mergeRight[current - leafCount];
+            if (members[left] != null && members[right] != null) {
+                BitSet joined = (BitSet) members[left].clone();
+                joined.or(members[right]);
+                members[current] = joined;
+                continue;
+            }
+
+            // come back to this cluster once both children are built
+            pending[pendingCount++] = current;
+            if (members[left] == null) {
+                pending[pendingCount++] = left;
+            }
+            if (members[right] == null) {
+                pending[pendingCount++] = right;
+            }
+        }
+        return members[cluster];
+    }
+
     private static boolean hasChildren(Node node, Node left, Node right) {
         if (node.getChildCount() != 2) {
             return false;
@@ -789,21 +897,6 @@ public class TreeUtils {
         Node first = node.getChild(0);
         Node second = node.getChild(1);
         return (first == left && second == right) || (first == right && second == left);
-    }
-
-    private static BitSet collectClades(Node node, Map<Node, BitSet> clades) {
-        BitSet clade = new BitSet();
-
-        if (node.isLeaf()) {
-            clade.set(node.getNr());
-        } else {
-            for (Node child : node.getChildren()) {
-                clade.or(collectClades(child, clades));
-            }
-        }
-
-        clades.put(node, clade);
-        return clade;
     }
 
 }

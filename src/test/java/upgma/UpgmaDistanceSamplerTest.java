@@ -35,7 +35,7 @@ class UpgmaDistanceSamplerTest {
                     CONCENTRATION);
 
             double[][] distances = new double[leafCount][leafCount];
-            new UpgmaDistanceSampler(model, rng).sample(distances);
+            new UpgmaDistanceSampler(leafCount, rng).sample(model, distances);
 
             assertThat(UpgmaFixtures.cladesWithHeights(UpgmaClustering.cluster(distances), leafCount))
                     .as("leafCount = " + leafCount)
@@ -60,7 +60,7 @@ class UpgmaDistanceSamplerTest {
                     CONCENTRATION);
 
             double[][] distances = new double[leafCount][leafCount];
-            new UpgmaDistanceSampler(model, rng).sample(distances);
+            new UpgmaDistanceSampler(leafCount, rng).sample(model, distances);
 
             for (int i = 0; i < leafCount; i++) {
                 assertThat(distances[i][i]).isEqualTo(0.0);
