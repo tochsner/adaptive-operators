@@ -3,12 +3,12 @@ package upgma;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import beast.base.spec.type.RealScalar;
-import beast.base.util.Randomizer;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
+import java.util.SplittableRandom;
 
 /**
  * Draws a distance matrix D that is consistent with a fixed tree, following the backward
@@ -40,8 +40,15 @@ public class UpgmaDistanceSampler {
     // using the same Beta shapes.
     private static final double MIN_MEAN = 0.1;
 
+    // the baseline the excesses are measured from is capped at (1 - EXCESS_FLOOR) times the smaller of
+    // V's two scores, so the closer child always keeps a relative excess of at least EXCESS_FLOOR and
+    // the difference between the two scores stays visible even when the data places V inside the
+    // split. Must match between UpgmaDistanceSampler and UpgmaConditionalDensity.
+    private static final double EXCESS_FLOOR = 0.1;
+
     private final int n;
     private final double concentration;
+    private final SplittableRandom rng;
     private final double[][] substitutionDistances;
     private final double[] tipDates;
     private final RealScalar<?> substitutionRate;
@@ -55,8 +62,15 @@ public class UpgmaDistanceSampler {
     /** Leaf indices under every node, indexed by node number. */
     private final int[][] clade;
 
-    public UpgmaDistanceSampler(Tree tree, double[][] substitutionDistances, double[] tipDates, RealScalar<?> substitutionRate, double concentration) {
+    /**
+     * @param rng private generator for the Beta draws; the operator seeds it once from {@code Randomizer}
+     *            so runs stay reproducible from the BEAST seed without paying the per-call lock
+     */
+    public UpgmaDistanceSampler(
+            Tree tree, double[][] substitutionDistances, double[] tipDates, RealScalar<?> substitutionRate,
+            double concentration, SplittableRandom rng) {
         this.n = tree.getLeafNodeCount();
+        this.rng = rng;
         this.substitutionDistances = substitutionDistances;
         this.tipDates = tipDates;
         this.substitutionRate = substitutionRate;
@@ -140,6 +154,10 @@ public class UpgmaDistanceSampler {
             int xSize = aSize + bSize;
 
             double dr = this.mergeDistance[r];
+
+            // the data's own merge distance of the split: the baseline the excesses are measured
+            // from, so that the Beta mean does not depend on how the tree is calibrated to the rate
+            double splitScore = substitutionScore(this.clade[aId], this.clade[bId]);
             double delta = this.mergeDistance[r + 1] - dr;
 
             active.remove(Integer.valueOf(xId));
@@ -159,11 +177,11 @@ public class UpgmaDistanceSampler {
                 double base = xSize * (vx + delta);
 
                 double mean = betaMean(
-                        substitutionScore(this.clade[v], this.clade[aId]) - dr,
-                        substitutionScore(this.clade[v], this.clade[bId]) - dr,
-                        aSize, bSize);
+                        substitutionScore(this.clade[v], this.clade[aId]),
+                        substitutionScore(this.clade[v], this.clade[bId]),
+                        splitScore, aSize, bSize);
 
-                double p = sampleBeta(this.concentration * mean, this.concentration * (1.0 - mean));
+                double p = this.sampleBeta(this.concentration * mean, this.concentration * (1.0 - mean));
                 setSlack(slack, v, aId, p * base / aSize);
                 setSlack(slack, v, bId, (1.0 - p) * base / bSize);
             }
@@ -201,23 +219,58 @@ public class UpgmaDistanceSampler {
         return sum / (leavesV.length * leavesA.length);
     }
 
-    /** Draws Beta(alpha, beta) via two Gamma draws, since {@code Randomizer} has no direct Beta sampler. */
-    private static double sampleBeta(double alpha, double beta) {
-        double x = Randomizer.nextGamma(alpha, 1.0);
-        double y = Randomizer.nextGamma(beta, 1.0);
+    /** Draws Beta(alpha, beta) as X / (X + Y) with X ~ Gamma(alpha, 1) and Y ~ Gamma(beta, 1). */
+    private double sampleBeta(double alpha, double beta) {
+        double x = sampleGamma(alpha, this.rng);
+        double y = sampleGamma(beta, this.rng);
         return x / (x + y);
     }
 
+    /**
+     * Draws Gamma(shape, 1) with the Marsaglia-Tsang (2000) squeeze method: one normal and one uniform
+     * per attempt, accepted almost always, with a log only on the rare fallback.
+     */
+    private static double sampleGamma(double shape, SplittableRandom rng) {
+        if (shape < 1.0) {
+            return sampleGamma(shape + 1.0, rng) * Math.pow(rng.nextDouble(), 1.0 / shape);
+        }
+
+        double d = shape - 1.0 / 3.0;
+        double c = 1.0 / Math.sqrt(9.0 * d);
+        while (true) {
+            double x = rng.nextGaussian();
+            double v = 1.0 + c * x;
+            if (v <= 0.0) {
+                continue;
+            }
+            v = v * v * v;
+
+            double u = rng.nextDouble();
+            double x2 = x * x;
+            if (u < 1.0 - 0.0331 * x2 * x2) {
+                return d * v;
+            }
+            if (Math.log(u) < 0.5 * x2 + d * (1.0 - v + Math.log(v))) {
+                return d * v;
+            }
+        }
+    }
 
     /**
-     * Mean of {@code p_r(V, A)}: the fraction of the excess {@code |A|(S(V, A) - d(r))} over the total
-     * excess {@code |A|(S(V, A) - d(r)) + |B|(S(V, B) - d(r))}, with negative excesses clipped to 0.
-     * Falls back to the no-information value {@code |A| / |X|} when the data places V no further
-     * from either child than the merge distance, and is clamped away from 0 and 1.
+     * Mean of {@code p_r(V, A)}: the fraction of the excess {@code |A|(S(V, A) - b)} over the total
+     * excess {@code |A|(S(V, A) - b) + |B|(S(V, B) - b)}. The baseline {@code b} is the data's own
+     * merge distance of the split {@code S(A, B)}, so the mean is a function of topology and data
+     * alone and a common scale factor on all scores (a miscalibrated rate) cancels. When the data
+     * places V inside the split, i.e. closer to a child than the children are to each other, the
+     * baseline is capped at {@code (1 - EXCESS_FLOOR)} times the smaller score instead, which keeps
+     * the difference between the two scores as a graded signal rather than clipping it away. Falls
+     * back to the no-information value {@code |A| / |X|} only when both scores are 0, and is clamped
+     * away from 0 and 1.
      */
-    private static double betaMean(double excessA, double excessB, int aSize, int bSize) {
-        double weightedA = aSize * Math.max(excessA, 0.0);
-        double weightedB = bSize * Math.max(excessB, 0.0);
+    private static double betaMean(double scoreVA, double scoreVB, double splitScore, int aSize, int bSize) {
+        double baseline = Math.min(splitScore, (1.0 - EXCESS_FLOOR) * Math.min(scoreVA, scoreVB));
+        double weightedA = aSize * Math.max(scoreVA - baseline, 0.0);
+        double weightedB = bSize * Math.max(scoreVB - baseline, 0.0);
         double total = weightedA + weightedB;
 
         double mean = total > 0.0 ? weightedA / total : (double) aSize / (aSize + bSize);

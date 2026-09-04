@@ -12,18 +12,20 @@ import beast.base.spec.type.RealScalar;
 import beast.base.util.Randomizer;
 
 import java.util.List;
+import java.util.SplittableRandom;
 
 /**
  * Implement an operator that:
  * 1.   Samples a distance matrix D conditioned on the current tree such that UPGMA(D) = T.
- * 2.   Perturbs D by multiplying entries with log-normal noise.
+ * 2.   Perturbs D by adding Gaussian noise to entries.
  * 3.   Performs UPGMA to reconstruct the perturbed tree.
  * See @approach.md for a description of the conditional density.
  */
 public class UpgmaRefreshOperator extends TreeOperator {
 
-    public final Input<Double> concentrationInput = new Input<>("concentration", "", 10.0);
+    public final Input<Double> concentrationInput = new Input<>("concentration", "", 100.0);
     public final Input<Integer> affectedNodeCountInput = new Input<>("affectedCladeSize", "", 0);
+    public final Input<String> selectionModeInput = new Input<>("selectionMode", "which distances get perturbed: uniform, all or clade", "clade");
     public final Input<RealScalar<?>> substitutionRateInput = new Input<>("substitutionRate", "");
     public final Input<Alignment> alignmentInput = new Input<>("alignment", "");
 
@@ -33,7 +35,7 @@ public class UpgmaRefreshOperator extends TreeOperator {
     RealScalar<?> substitutionRate;
     Alignment alignment;
 
-    double scaleFactor = 0.01;
+    double scaleFactor = 0.1;
 
     int n;
     double[][] substitutionDistances;
@@ -41,6 +43,10 @@ public class UpgmaRefreshOperator extends TreeOperator {
 
     double[][] currentDistances;
     double[][] proposedDistances;
+
+    UpgmaTaxonSelection selection;
+
+    SplittableRandom rng;
 
     @Override
     public void initAndValidate() {
@@ -55,7 +61,9 @@ public class UpgmaRefreshOperator extends TreeOperator {
         this.n = this.tree.getLeafNodeCount();
         this.currentDistances = new double[n][n];
         this.proposedDistances = new double[n][n];
+        this.selection = new UpgmaTaxonSelection(UpgmaTaxonSelection.Mode.parse(this.selectionModeInput.get()), this.tree, this.affectedNodeCount);
 
+        this.rng = new SplittableRandom(Randomizer.nextLong());
         this.tipDates = this.computeTipDates();
         this.substitutionDistances = this.computeSubstitutionDistances(this.alignment);
     }
@@ -73,9 +81,7 @@ public class UpgmaRefreshOperator extends TreeOperator {
 
     /**
      * Computes the pairwise JC69 distances in expected substitutions, indexed by tree leaf node
-     * number (not by alignment taxon index, which need not agree with it) so the result lines up
-     * with {@link #tipDates}, {@link #currentDistances}, {@link #proposedDistances}, and the
-     * BEAST-node-numbered convention {@code TreeUtils.applyClustering} expects.
+     * number.
      */
     private double[][] computeSubstitutionDistances(Alignment alignment) {
         JukesCantorDistance distance = new JukesCantorDistance();
@@ -104,25 +110,70 @@ public class UpgmaRefreshOperator extends TreeOperator {
         this.sampleDistances(this.currentDistances, this.tree);
         double oldTreeLogDensity = this.getConditionalLogDensity(this.currentDistances, this.tree);
         
-        // perturb the distance matrix in log space with a Gaussian of scale scaleFactor
+        // perturb the distance matrix with
 
-        double logJacobian = this.perturbDistances(this.currentDistances, this.proposedDistances);
+        this.perturbDistances(this.currentDistances, this.proposedDistances);
         if (this.isInvalidDistanceMatrix(this.proposedDistances)) {
             return Double.NEGATIVE_INFINITY;
         }
 
         // reconstruct the new tree
 
-        this.updateTree(this.tree, this.proposedDistances);
+        UpgmaClustering.Result newClustering = UpgmaClustering.cluster(this.proposedDistances);
+
+        // in clade mode this rejects proposals whose clade dissolved and restores the exact heights
+        // of every merge the perturbation could not have changed
+        double logSelectionRatio = this.selection.reconcile(newClustering);
+        if (logSelectionRatio == Double.NEGATIVE_INFINITY) {
+            return Double.NEGATIVE_INFINITY;
+        }
+
+        this.updateTree(this.tree, newClustering);
         if (this.isInvalidTree(this.tree)) {
             return Double.NEGATIVE_INFINITY;
         }
 
         double newTreeLogDensity = this.getConditionalLogDensity(this.proposedDistances, this.tree);
 
-        // compute and return the HR ratio, including the log Jacobian of the multiplicative perturbation
+        // compute and return the HR ratio
 
-        return newTreeLogDensity - oldTreeLogDensity + logJacobian;
+        return newTreeLogDensity - oldTreeLogDensity + logSelectionRatio;
+    }
+
+    /**
+     * Returns the Monte Carlo mean of {@link #sampleDistances}, entrywise, over a hundred independent
+     * draws conditioned on the current tree. Diagnostic only: at this operator's own scale, the mean
+     * distance matrix has no particular meaning (it is not itself consistent with the tree under
+     * UPGMA), but it is a cheap way to sanity-check that the sampler's draws are centered where the
+     * merge distances say they should be.
+     */
+    private double[][] getMeanDistance() {
+        double[][] mean = new double[this.n][this.n];
+        double[][] sample = new double[this.n][this.n];
+
+        int draws = 100;
+        for (int k = 0; k < draws; k++) {
+            this.sampleDistances(sample, this.tree);
+            for (int i = 0; i < this.n; i++) {
+                for (int j = 0; j < this.n; j++) {
+                    mean[i][j] += sample[i][j];
+                }
+            }
+
+            System.out.println(sample[1][2] + "\t" + sample[1][3] + "\t" + sample[1][4] + "\t|\t" + sample[2][3] + "\t" + sample[3][4] +  "\t|\t" + sample[3][4]);
+        }
+
+        for (int i = 0; i < this.n; i++) {
+            for (int j = 0; j < this.n; j++) {
+                mean[i][j] /= draws;
+            }
+        }
+
+        System.out.println("-------------------------------------------------------");
+        System.out.println(mean[1][2] + "\t" + mean[1][3] + "\t" + mean[1][4] + "\t|\t" + mean[2][3] + "\t" + mean[2][4] +  "\t|\t" + mean[3][4]);
+        System.out.println(substitutionDistances[1][2] + "\t" + substitutionDistances[1][3] + "\t" + substitutionDistances[1][4] + "\t|\t" + substitutionDistances[2][3] + "\t" + substitutionDistances[2][4] +  "\t|\t" + substitutionDistances[3][4]);
+
+        return mean;
     }
 
     /**
@@ -130,7 +181,7 @@ public class UpgmaRefreshOperator extends TreeOperator {
      * branches extended to the present.
      */
     private void sampleDistances(double[][] distances, Tree tree) {
-        UpgmaDistanceSampler sampler = new UpgmaDistanceSampler(tree, this.substitutionDistances, this.tipDates, this.substitutionRate, this.concentration);
+        UpgmaDistanceSampler sampler = new UpgmaDistanceSampler(tree, this.substitutionDistances, this.tipDates, this.substitutionRate, this.concentration, this.rng);
         sampler.sample(distances);
     }
 
@@ -139,57 +190,40 @@ public class UpgmaRefreshOperator extends TreeOperator {
      * The distances correspond to a tree with extant branches extended to the present.
      */
     private double getConditionalLogDensity(double[][] distances, Tree tree) {
-        UpgmaConditionalDensity density =
-                new UpgmaConditionalDensity(tree, this.substitutionDistances, this.tipDates, this.substitutionRate, this.concentration);
+        UpgmaConditionalDensity density = new UpgmaConditionalDensity(tree, this.substitutionDistances, this.tipDates, this.substitutionRate, this.concentration);
         return density.logDensity(distances);
     }
 
     /**
      * Perturbs currentDistances and stores the new distances in proposedDistances.
-     * Every distance between two taxa in a uniformly random set of {@link #affectedNodeCount} taxa
-     * is multiplied by {@code exp(scaleFactor * N(0, 1))}; every other distance is copied through
-     * unchanged. Working in log space keeps every perturbed distance strictly positive and makes
-     * the move scale-free, so a single adapted scaleFactor fits shallow and deep distances alike.
-     *
-     * <p>Returns the log Jacobian of the perturbation, {@code sum of log(d'_ij / d_ij)} over the
-     * perturbed pairs, which the multiplicative (and hence asymmetric) kernel contributes to the
-     * Hastings ratio.
+     * Every distance between two taxa in the affected set, drawn by {@link #selection}, gets
+     * {@code scaleFactor * N(0, 1)} added; every other distance is copied through unchanged. The
+     * kernel is symmetric, so no Hastings correction is needed. A perturbed distance can go
+     * negative.
      */
-    private double perturbDistances(double[][] currentDistances, double[][] proposedDistances) {
-        int[] permutation = Randomizer.shuffled(this.n);
+    private void perturbDistances(double[][] currentDistances, double[][] proposedDistances) {
+        this.selection.select();
 
-        boolean[] affected = new boolean[this.n];
-        for (int i = 0; i < this.affectedNodeCount; i++) {
-            affected[permutation[i]] = true;
-        }
-
-        double logJacobian = 0.0;
         for (int i = 0; i < this.n; i++) {
+            boolean affectedI = this.selection.isAffected(i);
             for (int j = i + 1; j < this.n; j++) {
                 double value = currentDistances[i][j];
-                if (affected[i] && affected[j]) {
-                    double logScale = this.scaleFactor * Randomizer.nextGaussian();
-                    value *= Math.exp(logScale);
-                    logJacobian += logScale;
+                if (affectedI && this.selection.isAffected(j)) {
+                    value += this.scaleFactor * this.rng.nextGaussian();
                 }
                 proposedDistances[i][j] = value;
                 proposedDistances[j][i] = value;
             }
         }
-        return logJacobian;
     }
 
     /**
-     * Updates the tree by performing UPGMA on the distance matrix. The distances correspond to a tree with
-     * extant branches extended to the present, the resulting UPGMA tree gets pruned. This might lead to negative extant
-     * branch lengths.
-     * The node objects stay the same, the only thing that changes is the vertex relationships.
-     * Tries to keep as much of the original tree intact using {@code TreeUtils.applyClustering}.
+     * Runs UPGMA clustering of the distance matrix. The distances correspond to a tree with
+     * extant branches extended to the present, the resulting UPGMA tree gets pruned.
+     * This might lead to negative extant branch lengths.
      */
-    private void updateTree(Tree tree, double[][] distances) {
+    private void updateTree(Tree tree, UpgmaClustering.Result clustering) {
         this.tree.startEditing(this);
-
-        UpgmaClustering.Result clustering = UpgmaClustering.cluster(distances);
         TreeUtils.applyClustering(tree, clustering.mergeLeft, clustering.mergeRight, clustering.mergeHeight);
     }
 
@@ -229,9 +263,6 @@ public class UpgmaRefreshOperator extends TreeOperator {
 
     @Override
     public void setCoercableParameterValue(double value) {
-        if (!Double.isFinite(value) || value <= 0.0 || value > 1.0) {
-            throw new IllegalArgumentException("scaleFactor must be finite and in (0, 1]");
-        }
         this.scaleFactor = value;
     }
 

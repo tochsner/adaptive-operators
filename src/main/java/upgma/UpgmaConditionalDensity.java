@@ -36,6 +36,12 @@ public class UpgmaConditionalDensity {
     // using the same Beta shapes.
     private static final double MIN_MEAN = 0.1;
 
+    // the baseline the excesses are measured from is capped at (1 - EXCESS_FLOOR) times the smaller of
+    // V's two scores, so the closer child always keeps a relative excess of at least EXCESS_FLOOR and
+    // the difference between the two scores stays visible even when the data places V inside the
+    // split. Must match between UpgmaDistanceSampler and UpgmaConditionalDensity.
+    private static final double EXCESS_FLOOR = 0.1;
+
     private final int n;
     private final double concentration;
     private final double[][] substitutionDistances;
@@ -128,6 +134,9 @@ public class UpgmaConditionalDensity {
             int xSize = aSize + bSize;
             double dr = this.mergeDistance[r];
 
+            // the data's own merge distance of the split: the baseline the excesses are measured from
+            double splitScore = substitutionScore(this.clade[aId], this.clade[bId]);
+
             active.remove(Integer.valueOf(x.getNr()));
 
             for (int v : active) {
@@ -141,9 +150,9 @@ public class UpgmaConditionalDensity {
                 double p = aSize * (dVA - dr) / base;
 
                 double mean = betaMean(
-                        substitutionScore(vLeaves, this.clade[aId]) - dr,
-                        substitutionScore(vLeaves, this.clade[bId]) - dr,
-                        aSize, bSize);
+                        substitutionScore(vLeaves, this.clade[aId]),
+                        substitutionScore(vLeaves, this.clade[bId]),
+                        splitScore, aSize, bSize);
                 double alpha = this.concentration * mean;
                 double beta = this.concentration * (1.0 - mean);
 
@@ -188,14 +197,20 @@ public class UpgmaConditionalDensity {
 
 
     /**
-     * Mean of {@code p_r(V, A)}: the fraction of the excess {@code |A|(S(V, A) - d(r))} over the total
-     * excess {@code |A|(S(V, A) - d(r)) + |B|(S(V, B) - d(r))}, with negative excesses clipped to 0.
-     * Falls back to the no-information value {@code |A| / |X|} when the data places V no further
-     * from either child than the merge distance, and is clamped away from 0 and 1.
+     * Mean of {@code p_r(V, A)}: the fraction of the excess {@code |A|(S(V, A) - b)} over the total
+     * excess {@code |A|(S(V, A) - b) + |B|(S(V, B) - b)}. The baseline {@code b} is the data's own
+     * merge distance of the split {@code S(A, B)}, so the mean is a function of topology and data
+     * alone and a common scale factor on all scores (a miscalibrated rate) cancels. When the data
+     * places V inside the split, i.e. closer to a child than the children are to each other, the
+     * baseline is capped at {@code (1 - EXCESS_FLOOR)} times the smaller score instead, which keeps
+     * the difference between the two scores as a graded signal rather than clipping it away. Falls
+     * back to the no-information value {@code |A| / |X|} only when both scores are 0, and is clamped
+     * away from 0 and 1.
      */
-    private static double betaMean(double excessA, double excessB, int aSize, int bSize) {
-        double weightedA = aSize * Math.max(excessA, 0.0);
-        double weightedB = bSize * Math.max(excessB, 0.0);
+    private static double betaMean(double scoreVA, double scoreVB, double splitScore, int aSize, int bSize) {
+        double baseline = Math.min(splitScore, (1.0 - EXCESS_FLOOR) * Math.min(scoreVA, scoreVB));
+        double weightedA = aSize * Math.max(scoreVA - baseline, 0.0);
+        double weightedB = bSize * Math.max(scoreVB - baseline, 0.0);
         double total = weightedA + weightedB;
 
         double mean = total > 0.0 ? weightedA / total : (double) aSize / (aSize + bSize);
