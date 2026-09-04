@@ -23,6 +23,7 @@ public class UpgmaRefreshOperator extends TreeOperator {
     public final Input<Double> concentrationInput = new Input<>("concentration", "", 100.0);
     public final Input<Integer> affectedCladeSizeInput = new Input<>("affectedCladeSize", "", 0);
     public final Input<String> selectionModeInput = new Input<>("selectionMode", "which distances get perturbed: uniform, all or clade", "clade");
+    public final Input<String> perturbationModeInput = new Input<>("perturbationMode", "how the selected distances get perturbed: gaussian", "gaussian");
     public final Input<RealScalar<?>> substitutionRateInput = new Input<>("substitutionRate", "");
     public final Input<Alignment> alignmentInput = new Input<>("alignment", "");
 
@@ -30,8 +31,6 @@ public class UpgmaRefreshOperator extends TreeOperator {
     double concentration;
     RealScalar<?> substitutionRate;
     Alignment alignment;
-
-    double scaleFactor = 0.1;
 
     int n;
     double[][] substitutionDistances;
@@ -41,6 +40,7 @@ public class UpgmaRefreshOperator extends TreeOperator {
     double[][] proposedDistances;
 
     UpgmaTaxonSelection selection;
+    UpgmaDistancePerturbation perturbation;
 
     SplittableRandom rng;
 
@@ -54,11 +54,13 @@ public class UpgmaRefreshOperator extends TreeOperator {
         this.n = this.tree.getLeafNodeCount();
         this.currentDistances = new double[this.n][this.n];
         this.proposedDistances = new double[this.n][this.n];
+        this.rng = new SplittableRandom(Randomizer.nextLong());
         this.selection = new UpgmaTaxonSelection(
                 UpgmaTaxonSelection.Mode.parse(this.selectionModeInput.get()), this.tree,
                 this.affectedCladeSizeInput.get());
+        this.perturbation = new UpgmaDistancePerturbation(
+                UpgmaDistancePerturbation.Mode.parse(this.perturbationModeInput.get()), this.selection, this.rng);
 
-        this.rng = new SplittableRandom(Randomizer.nextLong());
         this.tipDates = this.computeTipDates();
         this.substitutionDistances = this.computeSubstitutionDistances(this.alignment);
     }
@@ -103,7 +105,7 @@ public class UpgmaRefreshOperator extends TreeOperator {
 
         // perturb the distance matrix
 
-        this.perturbDistances(this.currentDistances, this.proposedDistances);
+        double logPerturbationRatio = this.perturbation.perturb(this.currentDistances, this.proposedDistances);
         if (hasNegativeDistance(this.proposedDistances)) {
             return Double.NEGATIVE_INFINITY;
         }
@@ -130,7 +132,7 @@ public class UpgmaRefreshOperator extends TreeOperator {
         double proposedLogDensity =
                 new UpgmaConditionalDensity(this.createSplitModel()).logDensity(this.proposedDistances);
 
-        return proposedLogDensity - currentLogDensity + logSelectionRatio;
+        return proposedLogDensity - currentLogDensity + logPerturbationRatio + logSelectionRatio;
     }
 
     /**
@@ -140,27 +142,6 @@ public class UpgmaRefreshOperator extends TreeOperator {
     private UpgmaSplitModel createSplitModel() {
         return new UpgmaSplitModel(
                 this.tree, this.substitutionDistances, this.tipDates, this.substitutionRate, this.concentration);
-    }
-
-    /**
-     * Adds {@code scaleFactor * N(0, 1)} to every distance between two taxa in the affected set and
-     * copies the rest through unchanged. The kernel is symmetric, so it needs no Hastings
-     * correction, but a perturbed distance can go negative.
-     */
-    private void perturbDistances(double[][] currentDistances, double[][] proposedDistances) {
-        this.selection.select();
-
-        for (int i = 0; i < this.n; i++) {
-            boolean affectedI = this.selection.isAffected(i);
-            for (int j = i + 1; j < this.n; j++) {
-                double value = currentDistances[i][j];
-                if (affectedI && this.selection.isAffected(j)) {
-                    value += this.scaleFactor * this.rng.nextGaussian();
-                }
-                proposedDistances[i][j] = value;
-                proposedDistances[j][i] = value;
-            }
-        }
     }
 
     /** Returns true if any distance is negative, which UPGMA cannot interpret. */
@@ -193,19 +174,18 @@ public class UpgmaRefreshOperator extends TreeOperator {
 
     @Override
     public double getCoercableParameterValue() {
-        return this.scaleFactor;
+        return this.perturbation.getScaleFactor();
     }
 
     @Override
     public void setCoercableParameterValue(double value) {
-        this.scaleFactor = value;
+        this.perturbation.setScaleFactor(value);
     }
 
     @Override
     public void optimize(double logAlpha) {
-        double delta = this.calcDelta(logAlpha);
-        delta += Math.log(this.scaleFactor);
-        this.scaleFactor = Math.exp(delta);
+        double delta = this.calcDelta(logAlpha) + Math.log(this.perturbation.getScaleFactor());
+        this.perturbation.setScaleFactor(Math.exp(delta));
     }
 
     @Override
