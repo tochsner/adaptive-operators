@@ -1,34 +1,19 @@
 package upgma;
 
 /**
- * Plain average-linkage (UPGMA) clustering of a fixed distance matrix.
+ * Plain average-linkage (UPGMA) clustering of a fixed distance matrix: repeatedly merges the two
+ * closest clusters under {@code d(X, k) = (|A| d(A, k) + |B| d(B, k)) / |X|} until one remains.
  *
- * <p>Repeatedly merges the two closest active clusters, updating the remaining cluster distances
- * with the usual weighted-average (Lance-Williams) rule
- * {@code d(X, k) = (|A| d(A, k) + |B| d(B, k)) / |X|}, until a single cluster remains.
- *
- * <p>The {@code n - 1} merges are reported in the {@code (mergeLeft, mergeRight, mergeHeight)} form
- * {@code adapters.TreeUtils#applyClustering} expects: leaves are clusters {@code 0 .. n-1}, matching
- * the input matrix's own indexing, and the cluster created by the {@code k}-th merge is
- * {@code n + k}, the same numbering {@code distancematrix.SingleLinkageTree} uses. Merge heights are
- * half the merge distance, following the standard UPGMA convention that a node's height is the
- * cophenetic distance divided by two.
+ * <p>The {@code n - 1} merges come back in the form {@code adapters.TreeUtils#applyClustering}
+ * expects: leaves are clusters {@code 0 .. n-1} and the {@code k}-th merge creates cluster
+ * {@code n + k}. Merge heights are half the merge distance, the usual cophenetic convention.
  */
 public final class UpgmaClustering {
 
     private UpgmaClustering() {
     }
 
-    public static final class Result {
-        public final int[] mergeLeft;
-        public final int[] mergeRight;
-        public final double[] mergeHeight;
-
-        private Result(int[] mergeLeft, int[] mergeRight, double[] mergeHeight) {
-            this.mergeLeft = mergeLeft;
-            this.mergeRight = mergeRight;
-            this.mergeHeight = mergeHeight;
-        }
+    public record Result(int[] mergeLeft, int[] mergeRight, double[] mergeHeight) {
     }
 
     /**

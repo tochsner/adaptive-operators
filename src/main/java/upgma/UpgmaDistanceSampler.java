@@ -3,18 +3,15 @@ package upgma;
 import java.util.SplittableRandom;
 
 /**
- * Draws a distance matrix D that is consistent with a fixed tree, following the backward
- * slack-sampling construction in {@code approach.md}.
+ * Draws a distance matrix D consistent with a fixed tree, following the backward slack sampling in
+ * {@code approach.md}.
  *
- * <p>Walking the tree's merges backwards (see {@link UpgmaSplitModel}), every split of a cluster X
- * into its children A and B draws, for every other cluster V still active at that point, how much
- * of the accumulated slack between V and X falls to A and how much to B. Once every internal node
- * has been split back down to its leaves, all pairwise slacks are determined and the distance
- * matrix follows from {@code d(i, j) = d(1) + s_1(i, j)}.
+ * <p>Every split of a cluster X into A and B draws how much of each other active cluster's slack
+ * against X falls to A and how much to B. Once every internal node is split back down to its
+ * leaves, all pairwise slacks are determined and {@code d(i, j) = d(1) + s_1(i, j)}.
  *
- * <p>The matrix is indexed by tree leaf node number, matching {@code adapters.TreeUtils} and
- * {@code distancematrix.SingleLinkageTree} elsewhere in this codebase, so it can be handed straight
- * to {@code TreeUtils.applyClustering} without remapping.
+ * <p>The matrix is indexed by tree leaf node number, so it can go straight to
+ * {@code TreeUtils.applyClustering}.
  */
 public class UpgmaDistanceSampler {
 
@@ -22,18 +19,15 @@ public class UpgmaDistanceSampler {
     private final SplittableRandom rng;
 
     /**
-     * @param rng private generator for the Beta draws; the operator seeds it once from {@code Randomizer}
-     *            so runs stay reproducible from the BEAST seed without paying the per-call lock
+     * @param rng private generator for the Beta draws, seeded once from {@code Randomizer} so runs
+     *            stay reproducible without paying its per-call lock
      */
     public UpgmaDistanceSampler(UpgmaSplitModel model, SplittableRandom rng) {
         this.model = model;
         this.rng = rng;
     }
 
-    /**
-     * Draws slacks backwards from the root and writes the resulting distance matrix into
-     * {@code distances}, indexed by tree leaf node number.
-     */
+    /** Draws slacks backwards from the root and writes the distance matrix into {@code distances}. */
     public void sample(double[][] distances) {
         int n = this.model.leafCount();
         for (int i = 0; i < n; i++) {
@@ -90,10 +84,7 @@ public class UpgmaDistanceSampler {
         return x / (x + y);
     }
 
-    /**
-     * Draws Gamma(shape, 1) with the Marsaglia-Tsang (2000) squeeze method: one normal and one uniform
-     * per attempt, accepted almost always, with a log only on the rare fallback.
-     */
+    /** Draws Gamma(shape, 1) with the Marsaglia-Tsang (2000) squeeze method. */
     private static double sampleGamma(double shape, SplittableRandom rng) {
         if (shape < 1.0) {
             return sampleGamma(shape + 1.0, rng) * Math.pow(rng.nextDouble(), 1.0 / shape);

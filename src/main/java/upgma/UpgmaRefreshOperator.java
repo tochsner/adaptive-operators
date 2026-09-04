@@ -15,11 +15,8 @@ import java.util.List;
 import java.util.SplittableRandom;
 
 /**
- * Implement an operator that:
- * 1.   Samples a distance matrix D conditioned on the current tree such that UPGMA(D) = T.
- * 2.   Perturbs D by adding Gaussian noise to entries.
- * 3.   Performs UPGMA to reconstruct the perturbed tree.
- * See @approach.md for a description of the conditional density.
+ * Refreshes the tree by sampling a distance matrix D with {@code UPGMA(D) = T}, perturbing D with
+ * Gaussian noise and reclustering it. See approach.md for the conditional density.
  */
 public class UpgmaRefreshOperator extends TreeOperator {
 
@@ -66,9 +63,7 @@ public class UpgmaRefreshOperator extends TreeOperator {
         this.substitutionDistances = this.computeSubstitutionDistances(this.alignment);
     }
 
-    /**
-     * Computes the tip dates, indexed by tree leaf node number.
-     */
+    /** Computes the tip dates, indexed by tree leaf node number. */
     private double[] computeTipDates() {
         double[] tipDates = new double[this.n];
         for (int i = 0; i < this.n; i++) {
@@ -77,10 +72,7 @@ public class UpgmaRefreshOperator extends TreeOperator {
         return tipDates;
     }
 
-    /**
-     * Computes the pairwise JC69 distances in expected substitutions, indexed by tree leaf node
-     * number.
-     */
+    /** Computes the pairwise JC69 distances, indexed by tree leaf node number. */
     private double[][] computeSubstitutionDistances(Alignment alignment) {
         JukesCantorDistance distance = new JukesCantorDistance();
         distance.setPatterns(alignment);
@@ -128,7 +120,7 @@ public class UpgmaRefreshOperator extends TreeOperator {
         }
 
         this.tree.startEditing(this);
-        TreeUtils.applyClustering(this.tree, clustering.mergeLeft, clustering.mergeRight, clustering.mergeHeight);
+        TreeUtils.applyClustering(this.tree, clustering.mergeLeft(), clustering.mergeRight(), clustering.mergeHeight());
         if (hasNegativeBranch(this.tree)) {
             return Double.NEGATIVE_INFINITY;
         }
@@ -142,9 +134,8 @@ public class UpgmaRefreshOperator extends TreeOperator {
     }
 
     /**
-     * Returns a snapshot of the current tree and substitution rate, shared by the distance sampler
-     * and the conditional density. The distances it describes correspond to a tree with extant
-     * branches extended to the present.
+     * Returns a snapshot of the current tree and substitution rate for the sampler and the density.
+     * The distances it describes correspond to a tree with extant branches extended to the present.
      */
     private UpgmaSplitModel createSplitModel() {
         return new UpgmaSplitModel(
@@ -152,11 +143,9 @@ public class UpgmaRefreshOperator extends TreeOperator {
     }
 
     /**
-     * Perturbs currentDistances and stores the new distances in proposedDistances.
-     * Every distance between two taxa in the affected set, drawn by {@link #selection}, gets
-     * {@code scaleFactor * N(0, 1)} added; every other distance is copied through unchanged. The
-     * kernel is symmetric, so no Hastings correction is needed. A perturbed distance can go
-     * negative.
+     * Adds {@code scaleFactor * N(0, 1)} to every distance between two taxa in the affected set and
+     * copies the rest through unchanged. The kernel is symmetric, so it needs no Hastings
+     * correction, but a perturbed distance can go negative.
      */
     private void perturbDistances(double[][] currentDistances, double[][] proposedDistances) {
         this.selection.select();
@@ -174,10 +163,7 @@ public class UpgmaRefreshOperator extends TreeOperator {
         }
     }
 
-    /**
-     * Returns true if any distance is negative, which the perturbation can produce and UPGMA cannot
-     * interpret.
-     */
+    /** Returns true if any distance is negative, which UPGMA cannot interpret. */
     private static boolean hasNegativeDistance(double[][] distances) {
         for (double[] row : distances) {
             for (double d : row) {
@@ -190,9 +176,8 @@ public class UpgmaRefreshOperator extends TreeOperator {
     }
 
     /**
-     * Returns true if the tree has negative branch lengths. The sampled distances describe a tree
-     * with extant branches extended to the present, so pruning the reconstructed tree back to the
-     * sampling times can push a branch below zero.
+     * Returns true if the tree has a negative branch length, which pruning the extended extant
+     * branches back to the sampling times can produce.
      */
     private static boolean hasNegativeBranch(Tree tree) {
         for (Node node : tree.getNodesAsArray()) {

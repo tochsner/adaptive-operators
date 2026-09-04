@@ -10,27 +10,22 @@ import java.util.Arrays;
  * Chooses which taxa's pairwise distances get perturbed in a {@link UpgmaRefreshOperator} proposal,
  * and in clade mode reconciles the reclustered tree with that choice.
  *
- * <p>The selection is redrawn with {@link #select()} at the start of every proposal. In clade mode
- * the choice depends on the current tree, so the reverse move must be able to make the same choice:
- * {@link #reconcile} checks that the clade survived the reclustering, restores the exact heights of
- * every merge the perturbation could not have changed, and returns the log ratio of the selection
- * probabilities that enters the Hastings ratio.
+ * <p>{@link #select()} redraws the affected set at the start of every proposal. In clade mode the
+ * choice depends on the current tree, so {@link #reconcile} has to check that the reverse move
+ * could make the same choice.
  */
 public final class UpgmaTaxonSelection {
 
     /** How the set of perturbed distances is chosen in every proposal. */
     public enum Mode {
-        /** Per-pair noise on every distance among a uniformly random subset of {@code maxSize} taxa. */
+        /** Noise on every distance among a uniformly random subset of {@code maxSize} taxa. */
         UNIFORM,
-        /** Per-pair noise on every distance. */
+        /** Noise on every distance. */
         ALL,
-        /**
-         * Per-pair noise on every distance inside a uniformly random non-root clade of at most
-         * {@code maxSize} taxa.
-         */
+        /** Noise on every distance inside a random non-root clade of at most {@code maxSize} taxa. */
         CLADE;
 
-        /** Parses a case-insensitive mode name, with a readable error for anything else. */
+        /** Parses a case-insensitive mode name. */
         public static Mode parse(String name) {
             try {
                 return Mode.valueOf(name.trim().toUpperCase());
@@ -86,8 +81,7 @@ public final class UpgmaTaxonSelection {
 
         switch (this.mode) {
             case ALL:
-                Arrays.fill(this.affected, true);
-                this.affectedCount = this.n;
+                this.selectAll();
                 break;
 
             case UNIFORM:
@@ -105,8 +99,8 @@ public final class UpgmaTaxonSelection {
     }
 
     /**
-     * Picks a non-root internal node with at most {@link #maxSize} leaves uniformly at random and
-     * marks its leaves as affected. Falls back to all taxa if no such node exists (n < 3).
+     * Marks the leaves of a uniformly random non-root clade of at most {@link #maxSize} taxa.
+     * Falls back to all taxa if there is no such clade (n < 3).
      */
     private void selectClade() {
         countLeaves(this.tree.getRoot(), this.leafCounts);
@@ -120,8 +114,7 @@ public final class UpgmaTaxonSelection {
         this.eligibleCladeCount = Math.max(eligible, 1);
 
         if (eligible == 0) {
-            Arrays.fill(this.affected, true);
-            this.affectedCount = this.n;
+            this.selectAll();
             this.selectedClade = this.tree.getRoot().getNr();
             return;
         }
@@ -139,6 +132,11 @@ public final class UpgmaTaxonSelection {
         }
     }
 
+    private void selectAll() {
+        Arrays.fill(this.affected, true);
+        this.affectedCount = this.n;
+    }
+
     private boolean isEligible(int nr) {
         return !this.tree.getNode(nr).isRoot() && this.leafCounts[nr] <= this.maxSize;
     }
@@ -154,17 +152,14 @@ public final class UpgmaTaxonSelection {
 
     /**
      * Reconciles a clustering of the perturbed distances with the current selection, before the tree
-     * is modified. Returns the log ratio of the reverse to the forward selection probability, which is
+     * is modified. Returns the log ratio of the reverse to the forward selection probability, or
      * {@code 0} outside clade mode.
      *
-     * <p>In clade mode, walks the clustering in merge order and classifies every cluster against the
-     * selected clade C. A cluster mixing members and non-members of C without containing all of C
-     * means C dissolved, so the reverse move could not select it: returns
-     * {@link Double#NEGATIVE_INFINITY}. Otherwise every cluster that is not a subset of C is an
-     * existing clade of the current tree, since no distance it depends on changed; its merge height is
-     * replaced by that node's exact height so that {@code TreeUtils.applyClustering} leaves the node
-     * untouched instead of dirtying it over a rounding difference. The returned ratio accounts for the
-     * number of eligible clades differing between the current and the proposed tree.
+     * <p>In clade mode a cluster that mixes members and non-members of the selected clade C without
+     * containing all of C means C dissolved, so the reverse move could not select it and the
+     * proposal is rejected with {@link Double#NEGATIVE_INFINITY}. Every other cluster outside C is
+     * an existing clade of the current tree, and its merge height is snapped back to that node's
+     * exact height so {@code TreeUtils.applyClustering} leaves the node untouched.
      */
     public double reconcile(UpgmaClustering.Result clustering) {
         if (this.mode != Mode.CLADE) {
@@ -185,8 +180,8 @@ public final class UpgmaTaxonSelection {
 
         for (int merge = 0; merge < this.n - 1; merge++) {
             int cluster = this.n + merge;
-            int left = clustering.mergeLeft[merge];
-            int right = clustering.mergeRight[merge];
+            int left = clustering.mergeLeft()[merge];
+            int right = clustering.mergeRight()[merge];
 
             int members = this.clusterMembers[left] + this.clusterMembers[right];
             int size = this.clusterSize[left] + this.clusterSize[right];
@@ -213,7 +208,7 @@ public final class UpgmaTaxonSelection {
             }
 
             this.oldNodeOfCluster[cluster] = parent.getNr();
-            clustering.mergeHeight[merge] = parent.getHeight();
+            clustering.mergeHeight()[merge] = parent.getHeight();
         }
         return true;
     }
