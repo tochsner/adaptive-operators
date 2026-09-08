@@ -3,7 +3,6 @@ package upgma;
 import adapters.TreeUtils;
 import beast.base.core.Input;
 import beast.base.evolution.alignment.Alignment;
-import beast.base.evolution.distance.JukesCantorDistance;
 import beast.base.evolution.operator.TreeOperator;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
@@ -15,15 +14,16 @@ import java.util.List;
 import java.util.SplittableRandom;
 
 /**
- * Refreshes the tree by sampling a distance matrix D with {@code UPGMA(D) = T}, perturbing D with
- * Gaussian noise and reclustering it. See approach.md for the conditional density.
+ * Refreshes the tree by sampling a distance matrix D with {@code UPGMA(D) = T}, perturbing D and
+ * reclustering it. See approach.md for the conditional density and ar1-perturbation.md for the
+ * data-informed perturbation.
  */
 public class UpgmaRefreshOperator extends TreeOperator {
 
     public final Input<Double> concentrationInput = new Input<>("concentration", "", 100.0);
     public final Input<Integer> affectedCladeSizeInput = new Input<>("affectedCladeSize", "", 0);
     public final Input<String> selectionModeInput = new Input<>("selectionMode", "which distances get perturbed: uniform, all or clade", "clade");
-    public final Input<String> perturbationModeInput = new Input<>("perturbationMode", "how the selected distances get perturbed: gaussian", "gaussian");
+    public final Input<String> perturbationModeInput = new Input<>("perturbationMode", "how the selected distances get perturbed: gaussian or ar1", "gaussian");
     public final Input<RealScalar<?>> substitutionRateInput = new Input<>("substitutionRate", "");
     public final Input<Alignment> alignmentInput = new Input<>("alignment", "");
 
@@ -74,7 +74,9 @@ public class UpgmaRefreshOperator extends TreeOperator {
         this.scratch = new double[this.n * this.n];
 
         this.tipDates = this.computeTipDates();
-        this.substitutionDistances = this.computeSubstitutionDistances(this.alignment);
+        UpgmaJukesCantorSurrogate surrogate = new UpgmaJukesCantorSurrogate(this.alignment, this.tree);
+        this.substitutionDistances = surrogate.distances();
+        this.perturbation.setSurrogate(surrogate.distances(), surrogate.variances(), this.tipDates);
     }
 
     /** Computes the tip dates, indexed by tree leaf node number. */
@@ -84,27 +86,6 @@ public class UpgmaRefreshOperator extends TreeOperator {
             tipDates[i] = this.tree.getNode(i).getHeight();
         }
         return tipDates;
-    }
-
-    /** Computes the pairwise JC69 distances, indexed by tree leaf node number. */
-    private double[][] computeSubstitutionDistances(Alignment alignment) {
-        JukesCantorDistance distance = new JukesCantorDistance();
-        distance.setPatterns(alignment);
-
-        double[][] substitutionDistances = new double[this.n][this.n];
-        for (int i = 0; i < this.n; i++) {
-            int taxonIndexI = alignment.getTaxonIndex(this.tree.getNode(i).getID());
-
-            for (int j = i + 1; j < this.n; j++) {
-                int taxonIndexJ = alignment.getTaxonIndex(this.tree.getNode(j).getID());
-
-                double d = distance.pairwiseDistance(taxonIndexI, taxonIndexJ);
-                substitutionDistances[i][j] = d;
-                substitutionDistances[j][i] = d;
-            }
-        }
-
-        return substitutionDistances;
     }
 
     @Override
@@ -118,7 +99,7 @@ public class UpgmaRefreshOperator extends TreeOperator {
         // perturb the distance matrix
 
         double logPerturbationRatio = this.perturbation.perturb(this.currentDistances, this.proposedDistances);
-        if (hasNegativeDistance(this.proposedDistances)) {
+        if (logPerturbationRatio == Double.NEGATIVE_INFINITY || hasNegativeDistance(this.proposedDistances)) {
             return Double.NEGATIVE_INFINITY;
         }
 
@@ -197,10 +178,19 @@ public class UpgmaRefreshOperator extends TreeOperator {
         this.perturbation.setScaleFactor(value);
     }
 
+    /** Adapts on the log scale, or the logit scale for a bounded mode, and the AR1 rate. */
     @Override
     public void optimize(double logAlpha) {
-        double delta = this.calcDelta(logAlpha) + Math.log(this.perturbation.getScaleFactor());
-        this.perturbation.setScaleFactor(Math.exp(delta));
+        this.perturbation.adaptRate();
+
+        double delta = this.calcDelta(logAlpha);
+        double scaleFactor = this.perturbation.getScaleFactor();
+        if (this.perturbation.getMode().isBounded()) {
+            double logit = Math.log(scaleFactor / (1.0 - scaleFactor)) + delta;
+            this.perturbation.setScaleFactor(1.0 / (1.0 + Math.exp(-logit)));
+        } else {
+            this.perturbation.setScaleFactor(Math.exp(Math.log(scaleFactor) + delta));
+        }
     }
 
     @Override
