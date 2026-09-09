@@ -46,6 +46,7 @@ import delayedacceptance.ApproximateDelayedAcceptanceMCMC;
 import delayedacceptance.DelayedAcceptanceMCMC;
 import delayedacceptance.MLPPosteriorApproximation;
 import distancematrix.DistanceMatrixOperator;
+import operatorsleection.OrderedOperatorMCMC;
 
 open module adaptiveoperators {
     requires beast.pkgmgmt;
@@ -67,6 +68,7 @@ open module adaptiveoperators {
 
     provides beast.base.core.BEASTInterface with
             DistanceMatrixOperator,
+            OrderedOperatorMCMC,
             AdaptiveOperator,
             BasicAdapter,
             TaxaDistanceAdapterGenerator,

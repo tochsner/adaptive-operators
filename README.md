@@ -15,6 +15,7 @@ This README summarizes the operator approaches implemented in this package:
 - [Irreversible Guided Random Walks](#irreversible-guided-random-walks)
 - [Delayed-Acceptance and ML-Assisted Runs](#delayed-acceptance-and-ml-assisted-runs)
 - [Adaptive Operator Weighting and Scheduling](#adaptive-operator-weighting-and-scheduling)
+- [Ordered Operator Cycles](#ordered-operator-cycles)
 
 ## Adapters
 
@@ -189,3 +190,15 @@ Relevant classes:
 - [`schedule.DualAveragingOperatorSchedule`](src/main/java/schedule/DualAveragingOperatorSchedule.java)
 - [`weightoptimization.AdaptiveWeightOperator`](src/main/java/weightoptimization/AdaptiveWeightOperator.java)
 - [`weightoptimization.RunningAverageScheme`](src/main/java/weightoptimization/RunningAverageScheme.java)
+
+## Ordered Operator Cycles
+
+`OrderedOperatorMCMC` replaces BEAST's random operator selection with a fixed cycle through operators in definition order. Each operator runs for a number of steps equal to its integer weight (computed by rounding `weight * 10^weightPrecision`). After all operators complete one cycle, the sequence repeats.
+
+The `maxDwell` parameter caps how long a single visit to an operator lasts. When set, the cycle sweeps operators in order, giving each a limited dwell before moving on, then repeating the sweep until all weights are used. This spreads heavy operators into multiple visits, allowing better conditioning between coupled parameter blocks.
+
+Each Metropolis-Hastings step remains posterior-invariant, and the cycling position does not affect the target distribution. Cycle position is not stored in state files, so resumed runs restart from the first operator. All weights must round to nonzero values; increase `weightPrecision` if needed. Operator subschedules are not applied.
+
+Relevant classes:
+
+- [`operatorsleection.OrderedOperatorMCMC`](src/main/java/operatorsleection/OrderedOperatorMCMC.java)
