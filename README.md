@@ -6,6 +6,7 @@ This README summarizes the operator approaches implemented in this package:
 - [Learned Conditional Proposals](#learned-conditional-proposals)
 - [Learned Tree-Distance Proposals](#learned-tree-distance-proposals)
 - [Distance-Matrix Proposals](#distance-matrix-proposals)
+- [UPGMA Refresh Proposals](#upgma-refresh-proposals)
 - [Slice-Based Proposals](#slice-based-proposals)
 - [Transport-Based Proposals](#transport-based-proposals)
 - [Gradient and MALA Proposals](#gradient-and-mala-proposals)
@@ -85,6 +86,20 @@ Relevant classes:
 - [`distancematrix.SingleLinkageTree`](src/main/java/distancematrix/SingleLinkageTree.java)
 - [`distancematrix.ReferenceDensity`](src/main/java/distancematrix/ReferenceDensity.java)
 - [`adapters.TreeUtils.applyClustering`](src/main/java/adapters/TreeUtils.java), which installs a whole topology into an existing tree while keeping the node of every clade that survives
+
+## UPGMA Refresh Proposals
+
+`UpgmaRefreshOperator` augments the tree with a full distance matrix and treats the tree as the *average-linkage* (UPGMA) clustering of that matrix. Each proposal samples a matrix conditional on the current tree from the exact conditional density, perturbs a subset of distances, reclusters, and corrects with the closed-form Jacobian and conditional-density difference. See [`upgma/approach.md`](src/main/java/upgma/approach.md) for the augmented-state derivation and [`upgma/ar1-perturbation.md`](src/main/java/upgma/ar1-perturbation.md) for the AR(1) perturbation.
+
+Distances to perturb are chosen uniformly, over all pairs, or restricted to one randomly selected clade (`selectionMode`), and are then perturbed by a symmetric Gaussian random walk or a data-informed AR(1) walk that drifts each pair toward a JC69 pairwise-likelihood surrogate with an adaptively estimated substitution rate (`perturbationMode`).
+
+Relevant classes:
+
+- [`upgma.UpgmaRefreshOperator`](src/main/java/upgma/UpgmaRefreshOperator.java)
+- [`upgma.UpgmaClustering`](src/main/java/upgma/UpgmaClustering.java)
+- [`upgma.UpgmaDistanceSampler`](src/main/java/upgma/UpgmaDistanceSampler.java)
+- [`upgma.UpgmaDistancePerturbation`](src/main/java/upgma/UpgmaDistancePerturbation.java)
+- [`upgma.UpgmaTaxonSelection`](src/main/java/upgma/UpgmaTaxonSelection.java)
 
 ## Slice-Based Proposals
 
