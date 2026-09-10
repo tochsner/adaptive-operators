@@ -30,6 +30,7 @@ Relevant classes:
 - [`adapters.TreeTripletAdapter`](src/main/java/adapters/TreeTripletAdapter.java)
 - [`adapters.LocalTreeAdapter`](src/main/java/adapters/LocalTreeAdapter.java)
 - [`adapters.NodePositionAdapter`](src/main/java/adapters/NodePositionAdapter.java)
+- [`adapters.TreeDescriptionAdapter`](src/main/java/adapters/TreeDescriptionAdapter.java)
 
 Relevant transform classes:
 
