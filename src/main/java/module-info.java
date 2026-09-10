@@ -5,6 +5,7 @@ import adaptiveoperators.AdaptiveOperator;
 import adapters.BasicAdapter;
 import adapters.TreeTripletAdapter;
 import adapters.LocalTreeAdapter;
+import adapters.NodeEmbeddingAdapter;
 import adapters.TreeHeightAdapter;
 import adapters.MutableTreeHeightAdapter;
 import adapters.TreeDescriptionAdapter;
@@ -79,6 +80,7 @@ open module adaptiveoperators {
             TreeGraphOperator,
             BasicAdapter,
             TaxaDistanceAdapterGenerator,
+            NodeEmbeddingAdapter,
             IntSimplexRoundTransform,
             SimulatedAnnealing,
             DualAveragingOperatorSchedule,
