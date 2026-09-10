@@ -40,7 +40,7 @@ public class AdaptiveOperator extends Operator {
             totalNumImmutable += adapter.getNumImmutable();
         }
 
-        this.sampler = new NeuralGaussianMixtureSampler(totalNumImmutable, totalNumMutable);
+        this.sampler = new MultivariateNormalSampler(totalNumImmutable, totalNumMutable);
     }
 
     @Override

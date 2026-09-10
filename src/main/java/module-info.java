@@ -7,6 +7,7 @@ import adapters.TreeTripletAdapter;
 import adapters.LocalTreeAdapter;
 import adapters.TreeHeightAdapter;
 import adapters.MutableTreeHeightAdapter;
+import adapters.TreeDescriptionAdapter;
 import adapters.NodePositionAdapter;
 import mala.CubeMAPGuidedMALAOperator;
 import adapters.NodeValueAdapter;
@@ -73,6 +74,7 @@ open module adaptiveoperators {
             DistanceMatrixOperator,
             OrderedOperatorMCMC,
             AdaptiveOperator,
+            TreeDescriptionAdapter,
             SATreeGraphOperator,
             TreeGraphOperator,
             BasicAdapter,
