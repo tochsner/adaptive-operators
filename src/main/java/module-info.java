@@ -41,6 +41,9 @@ import mcmc.SliceMCMC;
 import mcmc.MLMCMC;
 import mcmc.MalaMCMC;
 import mcmc.JumpMCMC;
+import surrogate.SimulatedAnnealing;
+import surrogate.SATreeGraphOperator;
+import surrogate.TreeGraphOperator;
 import upgma.UpgmaRefreshOperator;
 import delayedacceptance.ApproximateDelayedAcceptanceMCMC;
 import delayedacceptance.DelayedAcceptanceMCMC;
@@ -70,9 +73,12 @@ open module adaptiveoperators {
             DistanceMatrixOperator,
             OrderedOperatorMCMC,
             AdaptiveOperator,
+            SATreeGraphOperator,
+            TreeGraphOperator,
             BasicAdapter,
             TaxaDistanceAdapterGenerator,
             IntSimplexRoundTransform,
+            SimulatedAnnealing,
             DualAveragingOperatorSchedule,
             StepOutShrinkSliceOperator,
             MultivariateStepOutShrinkSliceOperator,
