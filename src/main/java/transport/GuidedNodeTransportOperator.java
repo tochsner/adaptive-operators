@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 public class GuidedNodeTransportOperator extends SliceOperator {
 
@@ -22,6 +23,10 @@ public class GuidedNodeTransportOperator extends SliceOperator {
     public final Input<Alignment> alignmentInput = new Input<>("alignment", "");
     public final Input<String> weightingSchemeInput = new Input<>("weightingScheme", "", "inverse"
     );
+    public final Input<Boolean> sampleCurrentBranchInput = new Input<>("sampleCurrentBranch",
+            "sample the attachment from the whole path, including the branch the node already hangs on. "
+                    + "Off by default, so that every proposal changes the topology and moving the node "
+                    + "within its branch is left to the cheaper height operators", false);
     private static final double MIN_DISTANCE = 1.0E-12;
 
     int BURN_IN = 0;
@@ -31,6 +36,7 @@ public class GuidedNodeTransportOperator extends SliceOperator {
     private boolean debug = false;
     FastJCDistance distance;
     WeightingScheme weightingScheme;
+    boolean sampleCurrentBranch;
 
     @Override
     public void initAndValidate() {
@@ -40,9 +46,13 @@ public class GuidedNodeTransportOperator extends SliceOperator {
         this.distance = new FastJCDistance();
         this.distance.setPatterns(this.alignment);
         this.weightingScheme = WeightingScheme.fromName(this.weightingSchemeInput.get());
+        this.sampleCurrentBranch = this.sampleCurrentBranchInput.get();
     }
 
     int count = 0;
+
+    // numbers of the nodes the current proposal can leave stale in the likelihood cache, null if unknown
+    private int[] affectedNodeNrs = null;
 
     @Override
     public double proposal() {
@@ -51,6 +61,7 @@ public class GuidedNodeTransportOperator extends SliceOperator {
 
     @Override
     public double proposal(Supplier<Double> computeCurrentLogLikelihood, State state) {
+        this.affectedNodeNrs = null;
         this.count++;
         if (this.count < BURN_IN) return Double.NEGATIVE_INFINITY;
         else if (this.count == BURN_IN) System.out.println("Start transport");
@@ -62,15 +73,23 @@ public class GuidedNodeTransportOperator extends SliceOperator {
 
         // select the second reference such that it is not the direct sibling
 
-        Node reference2 = this.sampleReference2(reference1);
+        List<Node> reference2Candidates = this.getReference2Candidates(reference1);
+        Node reference2 = reference2Candidates.get(Randomizer.nextInt(reference2Candidates.size()));
+
+        // record what a rejection has to recalculate, before the tree changes
+
+        this.affectedNodeNrs = this.getNodesAffectedByReattachment(reference1, reference2);
 
         // select the node to move on the path between the two references in a weighted manner
 
-        Node node = this.sampleNodeToMove(reference1, reference2);
+        WeightedCandidates nodeCandidates = this.getWeightedNodeCandidates(reference1, reference2);
+        Node node = nodeCandidates.candidates().get(this.sampleWeightedIndex(nodeCandidates.weights()));
 
         // compute the old triplet selection density
+        // (reuses the lists above instead of recomputing them: the tree has not been mutated yet,
+        // so getTripletLogProbability would recompute the exact same candidates and weights)
 
-        double forwardHR = this.getTripletLogProbability(reference1, reference2, node);
+        double forwardHR = this.getTripletLogProbability(reference2Candidates, reference2, nodeCandidates, node);
 
         // get the current and max distance
 
@@ -87,12 +106,20 @@ public class GuidedNodeTransportOperator extends SliceOperator {
         UnivariateOptimalTransportMap transportMap = new UnivariateOptimalTransportMap(
                 minAttachmentDistance, maxAttachmentDistance, pathHeights, height -> {
                     TreeUtils.reattachNode(node, height, reference1, reference2);
-                    Tree t = tree.copy();
-                    return computeCurrentLogLikelihood.get();
+                    double logDensity = computeCurrentLogLikelihood.get();
+
+                    // the cache now matches this tree, so the next evaluation only recalculates what the
+                    // next reattachment changes. Only the node flags are cleared: the tree stays marked as
+                    // edited, otherwise its next change would overwrite the backup a rejection restores
+                    this.tree.getRoot().makeAllDirty(Tree.IS_CLEAN);
+
+                    return logDensity;
                 }
         );
 
-        if (!transportMap.isInsideSamplingSupport(currentDistance)) {
+        double[] proposal = this.getProposal(transportMap, currentDistance, pathHeights);
+
+        if (proposal == null) {
             return Double.NEGATIVE_INFINITY;
         }
 
@@ -115,43 +142,115 @@ public class GuidedNodeTransportOperator extends SliceOperator {
             System.exit(1);
         }
 
-        // sample
+        // move to the sampled attachment
 
-        double sampledDistance = transportMap.sample();
+        double sampledDistance = proposal[0];
         TreeUtils.reattachNode(node, sampledDistance, reference1, reference2);
 
         // compute log HR ratio
 
         double backwardHR = this.getTripletLogProbability(reference1, reference2, node);
 
-        double logHR = transportMap.logHRCorrection(currentDistance, sampledDistance);
-        logHR += backwardHR - forwardHR;
-
-        return logHR;
+        return proposal[1] + backwardHR - forwardHR;
     }
 
-    private Node sampleReference2(Node reference1) {
-        List<Node> candidates = this.getReference2Candidates(reference1);
-        return candidates.get(Randomizer.nextInt(candidates.size()));
-    }
-
-    private Node sampleNodeToMove(Node reference1, Node reference2) {
-        List<Node> candidates = this.getNodeToMoveCandidates(reference1, reference2);
-        List<Double> weights = new ArrayList<>();
-
-        for (Node candidate : candidates) {
-            double weight = this.getWeight(reference1, reference2, candidate);
-            weights.add(weight);
+    /**
+     * Draws the new attachment distance and returns it together with the log Hastings ratio of the
+     * map, or null when the current attachment cannot be moved.
+     *
+     * <p>By default only attachments on another branch are proposed: the map usually puts most of its
+     * mass on the branch the node already hangs on, and moving it within that branch is left to the
+     * cheaper height operators. With {@code sampleCurrentBranch} the whole path is sampled instead.
+     */
+    private double[] getProposal(UnivariateOptimalTransportMap transportMap, double currentDistance, Set<Double> pathHeights) {
+        if (!transportMap.isInsideSamplingSupport(currentDistance)) {
+            return null;
         }
 
-        int candidateIdx = this.sampleWeightedIndex(weights);
-        return candidates.get(candidateIdx);
+        if (this.sampleCurrentBranch) {
+            double sampledDistance = transportMap.sample();
+            return new double[] {sampledDistance, transportMap.logHRCorrection(currentDistance, sampledDistance)};
+        }
+
+        double[] branchBoundaries = pathHeights.stream()
+                .filter(transportMap::isInsideSamplingSupport)
+                .mapToDouble(Double::doubleValue)
+                .sorted()
+                .toArray();
+
+        return transportMap.sampleExcludingSegment(currentDistance, branchBoundaries);
     }
 
+    /**
+     * Marks only the nodes the rejected proposal can have left stale. A proposal moves one node along
+     * the path between its two references, so partial likelihoods can only have changed on ancestors
+     * of the references, and transition matrices only on those ancestors and their children.
+     */
+    @Override
+    public void markDirtyAfterRestore(State state) {
+        if (this.affectedNodeNrs == null) {
+            super.markDirtyAfterRestore(state);
+            return;
+        }
+
+        for (int nodeNr : this.affectedNodeNrs) {
+            this.tree.getNode(nodeNr).makeDirty(Tree.IS_FILTHY);
+        }
+
+        // restore() cleared the tree's edited flag, without it no likelihood would recalculate
+        this.tree.setSomethingIsDirty(true);
+    }
+
+    /**
+     * Returns the numbers of every ancestor of either reference and of the children of those
+     * ancestors, which covers every node whose partials or branch length a reattachment of a node
+     * between the two references can change.
+     */
+    private int[] getNodesAffectedByReattachment(Node reference1, Node reference2) {
+        boolean[] affected = new boolean[this.tree.getNodeCount()];
+
+        for (Node reference : List.of(reference1, reference2)) {
+            for (Node ancestor = reference.getParent(); ancestor != null; ancestor = ancestor.getParent()) {
+                affected[ancestor.getNr()] = true;
+                for (Node child : ancestor.getChildren()) {
+                    affected[child.getNr()] = true;
+                }
+            }
+        }
+
+        return IntStream.range(0, affected.length).filter(nodeNr -> affected[nodeNr]).toArray();
+    }
+
+    private record WeightedCandidates(List<Node> candidates, List<Double> weights) {}
+
+    private WeightedCandidates getWeightedNodeCandidates(Node reference1, Node reference2) {
+        List<Node> candidates = this.getNodeToMoveCandidates(reference1, reference2);
+        List<Double> weights = new ArrayList<>(candidates.size());
+
+        for (Node candidate : candidates) {
+            weights.add(this.getWeight(reference1, reference2, candidate));
+        }
+
+        return new WeightedCandidates(candidates, weights);
+    }
+
+    // recomputes the candidates and weights from scratch. Used for the backward direction, where
+    // the tree has already been mutated by the move and the candidates may genuinely have changed
+
     private double getTripletLogProbability(Node reference1, Node reference2, Node node) {
+        List<Node> reference2Candidates = this.getReference2Candidates(reference1);
+        WeightedCandidates nodeCandidates = this.getWeightedNodeCandidates(reference1, reference2);
+
+        return this.getTripletLogProbability(reference2Candidates, reference2, nodeCandidates, node);
+    }
+
+    // uses already computed candidates and weights. Used for the forward direction, where these
+    // are identical to what a fresh computation would produce since the tree has not moved yet
+
+    private double getTripletLogProbability(
+            List<Node> reference2Candidates, Node reference2, WeightedCandidates nodeCandidates, Node node) {
         // compute probability for reference 2
 
-        List<Node> reference2Candidates = this.getReference2Candidates(reference1);
         if (!reference2Candidates.contains(reference2)) {
             throw new IllegalArgumentException("reference2 not amongst the candidates for it.");
         }
@@ -160,16 +259,17 @@ public class GuidedNodeTransportOperator extends SliceOperator {
 
         // compute probability for node
 
-        List<Node> nodeCandidates = this.getNodeToMoveCandidates(reference1, reference2);
+        List<Node> candidates = nodeCandidates.candidates();
+        List<Double> weights = nodeCandidates.weights();
 
         double cumWeight = 0.0;
         double nodeWeight = Double.NEGATIVE_INFINITY;
 
-        for (Node nodeCandidate : nodeCandidates) {
-            double weight = this.getWeight(reference1, reference2, nodeCandidate);
+        for (int i = 0; i < candidates.size(); i++) {
+            double weight = weights.get(i);
             cumWeight += weight;
 
-            if (nodeCandidate == node) {
+            if (candidates.get(i) == node) {
                 nodeWeight = weight;
             }
         }

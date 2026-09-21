@@ -11,9 +11,10 @@ import java.util.function.Function;
 
 public class UnivariateOptimalTransportMap {
 
-    private static final int GRID_SIZE = 8;
+    private static final int GRID_SIZE = 12;
     private static final double MIN_DENSITY = 1.0E-300;
-    private static final double EDGE_FRACTION = 1.0E-2;
+    private static final double EDGE_FRACTION = 1.0E-6;
+    private static final double MIN_OTHER_SEGMENT_MASS = 1.0E-12;
 
     private final double min;
     private final double max;
@@ -68,7 +69,66 @@ public class UnivariateOptimalTransportMap {
     }
 
     public double sample() {
-        double targetMass = Randomizer.nextDouble() * this.totalMass;
+        return this.quantile(Randomizer.nextDouble());
+    }
+
+    /**
+     * Samples from the map restricted to everything outside the segment holding {@code current},
+     * where the segments are the pieces of the support cut at {@code boundaries}. Used to propose
+     * only attachments on another branch (a Metropolized Gibbs step over branches).
+     *
+     * <p>The forward density is m(y) / (1 - M(seg(x))) for y outside seg(x), so the log Hastings
+     * ratio is [log m(x) - log(1 - M(seg(y)))] - [log m(y) - log(1 - M(seg(x)))].
+     */
+    double[] sampleExcludingSegment(double current, double[] boundaries) {
+        double[] currentSegment = this.segment(current, boundaries);
+        double massBelowCurrent = this.massFractionBelow(currentSegment[0]);
+        double currentMass = this.massFractionBelow(currentSegment[1]) - massBelowCurrent;
+        double otherMass = 1.0 - currentMass;
+        if (otherMass < MIN_OTHER_SEGMENT_MASS) {
+            return null;
+        }
+
+        // map a uniform draw over the other segments' mass around the excluded segment
+        double u = Randomizer.nextDouble() * otherMass;
+        double proposed = this.quantile(u < massBelowCurrent ? u : u + currentMass);
+
+        double[] proposedSegment = this.segment(proposed, boundaries);
+        if (proposedSegment[0] == currentSegment[0]) {
+            // only reachable through rounding at a segment boundary
+            return null;
+        }
+
+        double proposedMass = this.massFractionBelow(proposedSegment[1]) - this.massFractionBelow(proposedSegment[0]);
+        double reverseOtherMass = 1.0 - proposedMass;
+        if (reverseOtherMass < MIN_OTHER_SEGMENT_MASS) {
+            return null;
+        }
+
+        double logHR = (this.logDensity(current) - Math.log(reverseOtherMass))
+                - (this.logDensity(proposed) - Math.log(otherMass));
+        return new double[] {proposed, logHR};
+    }
+
+    /** Returns [lower, upper) of the segment holding {@code value}. */
+    private double[] segment(double value, double[] boundaries) {
+        double lower = this.supportMin;
+        double upper = this.supportMax;
+
+        for (double boundary : boundaries) {
+            if (boundary <= value) {
+                lower = Math.max(lower, boundary);
+            } else {
+                upper = Math.min(upper, boundary);
+            }
+        }
+
+        return new double[] {lower, upper};
+    }
+
+    /** Inverse of the map's cumulative distribution. */
+    double quantile(double p) {
+        double targetMass = p * this.totalMass;
         int interval = getIntervalForMass(this.cumulativeMass, targetMass);
         double localMass = targetMass - this.cumulativeMass[interval];
 
@@ -99,6 +159,35 @@ public class UnivariateOptimalTransportMap {
         }
 
         return this.shiftedLogDensitySpline.value(value) - Math.log(this.totalMass);
+    }
+
+    /** Fraction of the total mass that lies below {@code value}. */
+    double massFractionBelow(double value) {
+        if (value <= this.grid[0]) {
+            return 0.0;
+        }
+
+        if (value >= this.grid[this.grid.length - 1]) {
+            return 1.0;
+        }
+
+        int interval = Arrays.binarySearch(this.grid, value);
+        if (interval < 0) {
+            interval = -interval - 2;
+        }
+        interval = Math.min(interval, this.grid.length - 2);
+
+        double width = this.grid[interval + 1] - this.grid[interval];
+        double slope = this.shiftedLogDensities[interval + 1] - this.shiftedLogDensities[interval];
+        double partialWidth = value - this.grid[interval];
+        double partialMass = getIntervalMass(
+                this.grid[interval],
+                value,
+                this.shiftedLogDensities[interval],
+                this.shiftedLogDensities[interval] + slope * partialWidth / width
+        );
+
+        return (this.cumulativeMass[interval] + partialMass) / this.totalMass;
     }
 
     private static double[] getShiftedLogDensities(double[] logDensities, double shift) {

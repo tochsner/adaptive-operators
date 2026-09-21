@@ -19,7 +19,8 @@ import java.util.function.Supplier;
  * cache cannot survive the walk and {@code restoreCalculationNodes()} becomes unrecoverable. This
  * driver therefore bypasses the incremental cache for {@link SliceOperator}s: the likelihood
  * supplier recomputes the current posterior without snapshotting, and a rejected proposal is
- * recovered by a full recalculation rather than by restoring the corrupted cache. Non-slice
+ * recovered by recalculating everything the operator marks as possibly stale (see
+ * {@link SliceOperator#markDirtyAfterRestore}) rather than by restoring the corrupted cache. Non-slice
  * operators keep the standard, efficient incremental path.
  */
 public class JumpMCMC extends MCMC {
@@ -38,8 +39,8 @@ public class JumpMCMC extends MCMC {
 
     /**
      * Robust path for operators that evaluate the posterior repeatedly inside a single proposal.
-     * The cache is never trusted for restoration; rejected proposals are recovered by a full
-     * recomputation against the restored state nodes.
+     * The cache is never trusted for restoration; rejected proposals are recovered by recalculating
+     * against the restored state nodes.
      */
     private Operator propagateJumpOperator(final long sampleNr, final Operator operator, final SliceOperator sliceOperator) {
         // cache-bypassing supplier: mark dirty and recompute so the returned value reflects the
@@ -48,7 +49,7 @@ public class JumpMCMC extends MCMC {
         // (which restore() still needs to be correct)
         Supplier<Double> computeCurrentLogLikelihood = () -> {
             state.checkCalculationNodesDirtiness();
-            return ((CompoundDistribution) posterior).pDistributions.get().get(1).calculateLogP();
+            return posterior.calculateLogP();
         };
 
         final double logHastingsRatio = sliceOperator.proposal(computeCurrentLogLikelihood, this.state);
@@ -76,7 +77,7 @@ public class JumpMCMC extends MCMC {
                     operator.reject(newLogLikelihood == Double.NEGATIVE_INFINITY ? -1 : 0);
                 }
                 state.restore();
-                this.robustlyRecalculate();
+                this.recalculateAfterRestore(sliceOperator);
             }
             state.setEverythingDirty(false);
         } else {
@@ -86,7 +87,7 @@ public class JumpMCMC extends MCMC {
                 operator.reject(-2);
             }
             state.restore();
-            this.robustlyRecalculate();
+            this.recalculateAfterRestore(sliceOperator);
             state.setEverythingDirty(false);
         }
         log(sampleNr);
@@ -94,18 +95,19 @@ public class JumpMCMC extends MCMC {
     }
 
     /**
-     * Recompute the whole posterior from scratch and leave the cache clean and consistent with the
-     * current state. Used to recover after a rejected jump proposal, whose inner walk corrupts the
-     * incremental cache beyond what {@code restoreCalculationNodes()} can undo. Must only be called
-     * after {@code state.restore()}, never before, because {@code setEverythingDirty(true)} marks
-     * every node dirty without backing it up.
+     * Recalculates the posterior after a rejected jump proposal and leaves the cache clean and
+     * consistent with the current state. The inner walk corrupts the incremental cache beyond what
+     * {@code restoreCalculationNodes()} can undo, so everything the operator marks as possibly stale
+     * is recomputed: the whole posterior by default, less for operators that know what they touched.
+     * Must only be called after {@code state.restore()}, never before, because marking dirty does
+     * not back anything up.
      */
-    private void robustlyRecalculate() {
-        state.setEverythingDirty(true);
-        state.checkCalculationNodesDirtiness();
-        posterior.calculateLogP();
-        state.setEverythingDirty(false);
-        state.acceptCalculationNodes();
+    private void recalculateAfterRestore(final SliceOperator sliceOperator) {
+        sliceOperator.markDirtyAfterRestore(this.state);
+        this.state.checkCalculationNodesDirtiness();
+        this.posterior.calculateLogP();
+        this.state.setEverythingDirty(false);
+        this.state.acceptCalculationNodes();
     }
 
     /** Standard incremental Metropolis-Hastings path for ordinary operators. */
