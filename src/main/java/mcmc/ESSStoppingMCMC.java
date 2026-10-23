@@ -7,7 +7,10 @@ import beast.base.inference.Logger;
 import beast.base.inference.Operator;
 
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.PrintStream;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -25,6 +28,33 @@ public class ESSStoppingMCMC extends JumpMCMC {
     private static final double TARGET_ESS = 200;
 
     private List<LoggerTracker> loggerTrackers;
+
+    @Override
+    protected void doLoop() throws IOException {
+        this.announce("Started job at " + this.formatCurrentTime() + ".");
+
+        super.doLoop();
+    }
+
+    private String formatCurrentTime() {
+        return LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+    }
+
+    /** Prints a message to the screen and writes it as a comment to the log files. */
+    private void announce(final String message) {
+        Log.info.println(message);
+        this.writeCommentToLogFiles(message);
+    }
+
+    /** Writes a comment line to every compound log file, which tools like Tracer skip when reading the log. */
+    private void writeCommentToLogFiles(final String comment) {
+        for (final Logger logger : this.loggers) {
+            // tree logs are nexus files, and the screen logger has no file
+            if (logger.mode != Logger.LOGMODE.compound || logger.getFileName() == null) continue;
+
+            logger.getM_out().println("# " + comment);
+        }
+    }
 
     @Override
     protected Operator propagateState(final long sampleNr) {
