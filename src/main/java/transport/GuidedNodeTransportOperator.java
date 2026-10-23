@@ -15,7 +15,6 @@ import java.util.List;
 import java.util.Set;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 
 public class GuidedNodeTransportOperator extends SliceOperator {
 
@@ -76,14 +75,14 @@ public class GuidedNodeTransportOperator extends SliceOperator {
         List<Node> reference2Candidates = this.getReference2Candidates(reference1);
         Node reference2 = reference2Candidates.get(Randomizer.nextInt(reference2Candidates.size()));
 
-        // record what a rejection has to recalculate, before the tree changes
-
-        this.affectedNodeNrs = this.getNodesAffectedByReattachment(reference1, reference2);
-
         // select the node to move on the path between the two references in a weighted manner
 
         WeightedCandidates nodeCandidates = this.getWeightedNodeCandidates(reference1, reference2);
         Node node = nodeCandidates.candidates().get(this.sampleWeightedIndex(nodeCandidates.weights()));
+
+        // record where the node hangs before the tree changes, a rejection has to recalculate this spot
+
+        Node originalSibling = TreeUtils.getOtherChild(node.getParent(), node);
 
         // compute the old triplet selection density
         // (reuses the lists above instead of recomputing them: the tree has not been mutated yet,
@@ -120,6 +119,8 @@ public class GuidedNodeTransportOperator extends SliceOperator {
         double[] proposal = this.getProposal(transportMap, currentDistance, pathHeights);
 
         if (proposal == null) {
+            // the cache now matches the tree of the last grid evaluation
+            this.affectedNodeNrs = this.getNodesAffectedByReattachment(node, originalSibling);
             return Double.NEGATIVE_INFINITY;
         }
 
@@ -146,6 +147,9 @@ public class GuidedNodeTransportOperator extends SliceOperator {
 
         double sampledDistance = proposal[0];
         TreeUtils.reattachNode(node, sampledDistance, reference1, reference2);
+
+        // the proposed tree is the one the cache will hold once the MCMC has evaluated it
+        this.affectedNodeNrs = this.getNodesAffectedByReattachment(node, originalSibling);
 
         // compute log HR ratio
 
@@ -182,9 +186,12 @@ public class GuidedNodeTransportOperator extends SliceOperator {
     }
 
     /**
-     * Marks only the nodes the rejected proposal can have left stale. A proposal moves one node along
-     * the path between its two references, so partial likelihoods can only have changed on ancestors
-     * of the references, and transition matrices only on those ancestors and their children.
+     * Marks only the nodes the rejected proposal can have left stale. The cache holds the tree the
+     * node was last evaluated in, which differs from the restored tree only in where the node hangs.
+     * The partials that differ are therefore those of the ancestors of the node's parent in the
+     * restored tree and of the ancestors of the branch it hung on in the cached tree. Marking the
+     * node, its parent and the two siblings is enough, since the tree likelihood recomputes the
+     * partials of every ancestor of a dirty node, which is the least any recalculation can do.
      */
     @Override
     public void markDirtyAfterRestore(State state) {
@@ -202,23 +209,14 @@ public class GuidedNodeTransportOperator extends SliceOperator {
     }
 
     /**
-     * Returns the numbers of every ancestor of either reference and of the children of those
-     * ancestors, which covers every node whose partials or branch length a reattachment of a node
-     * between the two references can change.
+     * Returns the numbers of the moved node, its parent, its sibling before the proposal and its
+     * sibling in the cached tree. Node numbers survive the restore, which swaps the node objects.
      */
-    private int[] getNodesAffectedByReattachment(Node reference1, Node reference2) {
-        boolean[] affected = new boolean[this.tree.getNodeCount()];
+    private int[] getNodesAffectedByReattachment(Node node, Node originalSibling) {
+        Node parent = node.getParent();
+        Node cachedSibling = TreeUtils.getOtherChild(parent, node);
 
-        for (Node reference : List.of(reference1, reference2)) {
-            for (Node ancestor = reference.getParent(); ancestor != null; ancestor = ancestor.getParent()) {
-                affected[ancestor.getNr()] = true;
-                for (Node child : ancestor.getChildren()) {
-                    affected[child.getNr()] = true;
-                }
-            }
-        }
-
-        return IntStream.range(0, affected.length).filter(nodeNr -> affected[nodeNr]).toArray();
+        return new int[] {node.getNr(), parent.getNr(), originalSibling.getNr(), cachedSibling.getNr()};
     }
 
     private record WeightedCandidates(List<Node> candidates, List<Double> weights) {}

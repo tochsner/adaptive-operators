@@ -78,14 +78,14 @@ class UnivariateOptimalTransportMapTest {
     }
 
     @Test
-    void evaluatesTheDensityTwelveTimes() {
+    void evaluatesTheDensitySixTimes() {
         int[] evaluations = {0};
         new UnivariateOptimalTransportMap(0, 1.0, pathHeights, x -> {
             evaluations[0]++;
             return -x;
         });
 
-        assertThat(evaluations[0]).isEqualTo(12);
+        assertThat(evaluations[0]).isEqualTo(6);
     }
 
     @Test

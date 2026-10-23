@@ -539,13 +539,19 @@ public class TreeUtils {
         Node sibling = TreeUtils.getOtherChild(attachmentParent, node);
         Node oldGrandParent = attachmentParent.getParent();
 
+        // only the nodes whose branch changes are marked: node, parent, the old sibling and the new
+        // child. The grandparents keep their branch, and the tree likelihood recomputes their partials
+        // anyway because a child is dirty, so marking them would only recompute their matrices
+
         if (oldGrandParent == null) {
             sibling.setParent(null);
             if (node.getTree() != null) {
                 node.getTree().setRootOnly(sibling);
             }
         } else {
-            TreeUtils.replace(oldGrandParent, attachmentParent, sibling);
+            oldGrandParent.removeChild(attachmentParent);
+            oldGrandParent.addChild(sibling);
+            sibling.makeDirty(Tree.IS_FILTHY);
         }
 
         attachmentParent.removeChild(node);
@@ -576,10 +582,15 @@ public class TreeUtils {
                 node.getTree().setRootOnly(attachmentParent);
             }
         } else {
-            TreeUtils.replace(attachmentPoint.parent(), attachmentPoint.child(), attachmentParent);
+            attachmentPoint.parent().removeChild(attachmentPoint.child());
+            attachmentPoint.parent().addChild(attachmentParent);
             attachmentParent.addChild(node);
             attachmentParent.addChild(attachmentPoint.child());
         }
+
+        node.makeDirty(Tree.IS_FILTHY);
+        attachmentParent.makeDirty(Tree.IS_FILTHY);
+        attachmentPoint.child().makeDirty(Tree.IS_FILTHY);
     }
 
     private record AttachmentPoint(Node child, Node parent, double height) {};

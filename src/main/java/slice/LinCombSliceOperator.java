@@ -10,15 +10,14 @@ import beast.base.inference.StateNode;
 import beast.base.util.Randomizer;
 
 import java.util.ArrayList;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
 public class LinCombSliceOperator extends SliceOperator {
 
-    private static final double BURN_IN = 5_000;
-    private static final double NUM_RECENT_SAMPLES = 10_000;
+    private static final int BURN_IN = 5_000;
+    private static final int NUM_RECENT_SAMPLES = 10_000;
 
     private static final double TARGET_STEP_OUT_COUNT = 1.0;
     private static final double TARGET_SHRINK_COUNT = 1.0;
@@ -35,7 +34,9 @@ public class LinCombSliceOperator extends SliceOperator {
     private List<AdapterGenerator> adapterGenerators;
     private Tree tree;
     private int totalNumMutable;
-    private LinkedList<double[]> mostRecentSamples;
+    private double[][] mostRecentSamples;
+    private int numRecentSamples;
+    private int nextSampleIdx;
 
     private double initialWindowSize = 1.0;
     private long windowUpdateCount;
@@ -46,7 +47,7 @@ public class LinCombSliceOperator extends SliceOperator {
         this.adapterGenerators = this.adapterGeneratorsInput.get();
         this.tree = this.treeInput.get();
 
-        this.mostRecentSamples = new LinkedList<>();
+        this.mostRecentSamples = new double[NUM_RECENT_SAMPLES][];
 
         for (AdapterGenerator adapterGenerator : this.adapterGenerators) {
             this.adapters.addAll(adapterGenerator.getAdapters());
@@ -58,7 +59,7 @@ public class LinCombSliceOperator extends SliceOperator {
         }
 
         if (this.totalNumMutable == 0) {
-            throw new IllegalArgumentException("StepOutShrinkSliceOperator requires at least one mutable value");
+            throw new IllegalArgumentException("LinCombSliceOperator requires at least one mutable value");
         }
     }
 
@@ -88,18 +89,18 @@ public class LinCombSliceOperator extends SliceOperator {
         }
 
         this.remember(currentState);
-        if (this.mostRecentSamples.size() < BURN_IN) return Double.NEGATIVE_INFINITY;
-        if (this.mostRecentSamples.size() == BURN_IN) System.out.println("Start lincomb slicing");
+        if (this.numRecentSamples < BURN_IN) return Double.NEGATIVE_INFINITY;
+        if (this.numRecentSamples == BURN_IN) System.out.println("Start lincomb slicing");
 
-        final double[] otherStateA = this.mostRecentSamples.get(
-                Randomizer.nextInt(this.mostRecentSamples.size())
-        );
-        final double[] otherStateB = this.mostRecentSamples.get(
-                Randomizer.nextInt(this.mostRecentSamples.size())
-        );
+        final double[] otherStateA = this.mostRecentSamples[Randomizer.nextInt(this.numRecentSamples)];
+        final double[] otherStateB = this.mostRecentSamples[Randomizer.nextInt(this.numRecentSamples)];
 
         final double currentLogLikelihood = computeCurrentLogLikelihood.get();
-        final double logSliceDensity = currentLogLikelihood + Math.log(Randomizer.nextDouble());
+        final double currentLogTarget = currentLogLikelihood - this.computeLogJacobianCorrection(nodeId);
+        final double logSliceDensity = currentLogTarget + Math.log(Randomizer.nextDouble());
+
+        // the plain posterior at the last evaluated point, which is the accepted one when the slice is done
+        final double[] lastLogLikelihood = new double[1];
 
         int finalNodeId = nodeId;
         Function<Double, Double> evaluateAt = (x) -> {
@@ -115,7 +116,8 @@ public class LinCombSliceOperator extends SliceOperator {
                 return Double.NEGATIVE_INFINITY;
             }
 
-            return computeCurrentLogLikelihood.get();
+            lastLogLikelihood[0] = computeCurrentLogLikelihood.get();
+            return lastLogLikelihood[0] - this.computeLogJacobianCorrection(finalNodeId);
         };
 
         Function<Double, Boolean> isIn = (x) -> evaluateAt.apply(x) >= logSliceDensity;
@@ -171,7 +173,17 @@ public class LinCombSliceOperator extends SliceOperator {
 
         this.updateWindowSize(stepOutCount, shrinkCount);
 
-        return currentLogLikelihood - newLogDensity;
+        // the last evaluation was at newX
+        return currentLogLikelihood - lastLogLikelihood[0];
+    }
+
+    /** Returns the sum of the log Jacobian corrections of all adapters at the current state. */
+    private double computeLogJacobianCorrection(int nodeId) {
+        double correction = 0.0;
+        for (Adapter adapter : this.adapters) {
+            correction += adapter.getLogJacobianCorrection(nodeId);
+        }
+        return correction;
     }
 
     @Override
@@ -211,11 +223,9 @@ public class LinCombSliceOperator extends SliceOperator {
     }
 
     private void remember(double[] sample) {
-        this.mostRecentSamples.add(sample);
-
-        while (NUM_RECENT_SAMPLES <= this.mostRecentSamples.size()) {
-            this.mostRecentSamples.removeFirst();
-        }
+        this.mostRecentSamples[this.nextSampleIdx] = sample;
+        this.nextSampleIdx = (this.nextSampleIdx + 1) % NUM_RECENT_SAMPLES;
+        this.numRecentSamples = Math.min(this.numRecentSamples + 1, NUM_RECENT_SAMPLES);
     }
 
     private void refreshAdapters() {

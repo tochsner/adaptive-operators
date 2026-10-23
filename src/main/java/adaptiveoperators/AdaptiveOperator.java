@@ -13,12 +13,22 @@ import java.util.List;
 
 public class AdaptiveOperator extends Operator {
 
+    private static final double MIN_SCALE_FACTOR = 1.0E-3;
+    private static final double MAX_SCALE_FACTOR = 1.0E3;
+
     public final Input<List<Adapter>> adaptersInput = new Input<>("adapter", "", new ArrayList<>());
     public final Input<Tree> treeInput = new Input<>("tree", "");
+    public final Input<Boolean> globalRedrawInput = new Input<>("globalRedraw",
+            "If true, all mutable parameters of a node are redrawn from their learned conditional distribution " +
+                    "given the immutable ones. If false, all mutable parameters are changed locally by adding " +
+                    "zero-mean noise with the learned covariance to their current values.", true);
 
     private List<Adapter> adapters;
     private Tree tree;
     private ConditionalSampler sampler;
+    private boolean globalRedraw;
+    private int numMutable;
+    private int numImmutable;
 
     private final int burnIn = 1_000;
     private final int startTraining = 5_000;
@@ -40,7 +50,15 @@ public class AdaptiveOperator extends Operator {
             totalNumImmutable += adapter.getNumImmutable();
         }
 
-        this.sampler = new MultivariateNormalSampler(totalNumImmutable, totalNumMutable);
+        this.globalRedraw = this.globalRedrawInput.get();
+        this.numMutable = totalNumMutable;
+        this.numImmutable = totalNumImmutable;
+
+        if (this.globalRedraw) {
+            this.sampler = new MultivariateNormalSampler(totalNumImmutable, totalNumMutable);
+        } else {
+            this.sampler = new CenteredMultivariateNormalSampler(totalNumMutable);
+        }
     }
 
     @Override
@@ -64,7 +82,11 @@ public class AdaptiveOperator extends Operator {
         // record the state in the sampler
 
         if (this.count < this.endTraining) {
-            this.sampler.record(oldImmutable, oldMutable);
+            if (this.globalRedraw) {
+                this.sampler.record(oldImmutable, oldMutable);
+            } else {
+                this.sampler.record(new double[0], oldMutable);
+            }
         }
 
         if (this.count < this.startTraining) {
@@ -79,8 +101,7 @@ public class AdaptiveOperator extends Operator {
 
         // sample from the conditional distribution
 
-        double[] proposal;
-        proposal = this.sampler.sampleConditionally(this.getImmutable(nodeId), scaleFactor);
+        double[] proposal = this.sampleProposal(oldMutable, oldImmutable);
 
         // update the adapters
 
@@ -110,14 +131,32 @@ public class AdaptiveOperator extends Operator {
             return Double.NEGATIVE_INFINITY;
         }
 
-        logDensityOld += this.sampler.logDensity(newImmutable, oldMutable, scaleFactor);
-        logDensityNew += this.sampler.logDensity(oldImmutable, proposal, scaleFactor);
+        if (this.globalRedraw) {
+            // the local random walk is symmetric, so only the global redraw contributes proposal densities
+            logDensityOld += this.sampler.logDensity(newImmutable, oldMutable, scaleFactor);
+            logDensityNew += this.sampler.logDensity(oldImmutable, proposal, scaleFactor);
+        }
 
         return logDensityOld - logDensityNew;
     }
 
+    private double[] sampleProposal(double[] oldMutable, double[] oldImmutable) {
+        if (this.globalRedraw) {
+            return this.sampler.sampleConditionally(oldImmutable, this.scaleFactor);
+        }
+
+        // change all mutable parameters locally
+        double[] noise = this.sampler.sampleConditionally(new double[0], this.scaleFactor);
+        double[] proposal = new double[this.numMutable];
+        for (int i = 0; i < this.numMutable; i++) {
+            proposal[i] = oldMutable[i] + noise[i];
+        }
+
+        return proposal;
+    }
+
     private double[] getMutable(int nodeId) {
-        double[] mutable = new double[this.sampler.numValues];
+        double[] mutable = new double[this.numMutable];
 
         int idx = 0;
         for (Adapter adapter : this.adapters) {
@@ -130,7 +169,7 @@ public class AdaptiveOperator extends Operator {
     }
 
     private double[] getImmutable(int nodeId) {
-        double[] immutable = new double[this.sampler.numConditions];
+        double[] immutable = new double[this.numImmutable];
 
         int idx = 0;
         for (Adapter adapter : this.adapters) {
@@ -151,5 +190,32 @@ public class AdaptiveOperator extends Operator {
         }
 
         return nodes;
+    }
+
+    @Override
+    public double getCoercableParameterValue() {
+        return this.scaleFactor;
+    }
+
+    @Override
+    public void setCoercableParameterValue(double value) {
+        if (!Double.isFinite(value) || value <= 0.0) {
+            throw new IllegalArgumentException("scaleFactor must be finite and positive");
+        }
+        this.scaleFactor = value;
+    }
+
+    @Override
+    public void optimize(double logAlpha) {
+        // the global redraw uses the learned conditional distribution as is
+        if (this.globalRedraw) return;
+        if (this.count < this.startTraining) return;
+
+        double delta = this.calcDelta(logAlpha);
+        delta += Math.log(this.scaleFactor);
+
+        if (Double.isFinite(Math.exp(delta))) {
+            this.scaleFactor = Math.min(MAX_SCALE_FACTOR, Math.max(MIN_SCALE_FACTOR, Math.exp(delta)));
+        }
     }
 }

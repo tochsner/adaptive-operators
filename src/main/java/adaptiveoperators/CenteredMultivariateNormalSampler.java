@@ -15,35 +15,45 @@ public class CenteredMultivariateNormalSampler extends ConditionalSampler {
     private static final double RELATIVE_JITTER = 1.0E-10;
     private static final int MAX_CHOLESKY_ATTEMPTS = 12;
 
-    double[] mean;
-    double[][] covarianceSum; // the covariance * count
+    double[] mean;  // [conditions, values]
+    double[][] covarianceSum; // the joint covariance * count
     int count = 0;
 
     int batchSize = 64;
+    List<double[]> conditionsBatch;
     List<double[]> valuesBatch;
 
-    RealMatrix covariance;
-    RealMatrix regularizedCovariance;
+    RealMatrix regressionMatrix; // Sigma11^{-1} * Sigma12, maps centered conditions to the conditional mean
+    RealMatrix regularizedCovariance; // the conditional covariance of the values
     CholeskyDecomposition choleskyDecomposition;
 
     private final Random rng = new Random();
 
     public CenteredMultivariateNormalSampler(int numValues) {
-        super(0, numValues);
+        this(0, numValues);
+    }
 
-        this.mean = new double[numValues];
-        this.covarianceSum = new double[numValues][numValues];
-        this.covariance = new BlockRealMatrix(numValues, numValues);
+    public CenteredMultivariateNormalSampler(int numConditions, int numValues) {
+        super(numConditions, numValues);
 
+        int n = numConditions + numValues;
+        this.mean = new double[n];
+        this.covarianceSum = new double[n][n];
+
+        this.conditionsBatch = new ArrayList<>();
         this.valuesBatch = new ArrayList<>();
-        this.choleskyDecomposition = this.regularizedCholesky(this.covariance);
+
+        // without conditions, there is nothing to regress on, and a matrix without rows cannot be built
+        this.regressionMatrix = numConditions > 0 ? new BlockRealMatrix(numConditions, numValues) : null;
+        this.choleskyDecomposition = this.regularizedCholesky(new BlockRealMatrix(numValues, numValues));
     }
 
     @Override
     public void record(double[] conditions, double[] values) {
-        if (conditions.length != 0) throw new UnsupportedOperationException("No conditions are supported.");
+        if (!Arrays.stream(conditions).allMatch(Double::isFinite)) return;
         if (!Arrays.stream(values).allMatch(Double::isFinite)) return;
 
+        this.conditionsBatch.add(conditions);
         this.valuesBatch.add(values);
 
         if (this.valuesBatch.size() == this.batchSize) {
@@ -55,13 +65,17 @@ public class CenteredMultivariateNormalSampler extends ConditionalSampler {
         // update the mean and covariance using the last batch
 
         for (int i = 0; i < this.batchSize; i++) {
+            double[] conditions = this.conditionsBatch.get(i);
             double[] values = this.valuesBatch.get(i);
 
-            int n = values.length;
-            double[] x = values;
+            int n = conditions.length + values.length;
 
             // we update the mean and covariances using the Welford update
             // (see https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Welford's_online_algorithm)
+
+            double[] x = new double[n];
+            System.arraycopy(conditions, 0, x, 0, conditions.length);
+            System.arraycopy(values, 0, x, conditions.length, values.length);
 
             this.count += 1;
 
@@ -75,18 +89,50 @@ public class CenteredMultivariateNormalSampler extends ConditionalSampler {
             for (int j = 0; j < n; j++) {
                 for (int k = 0; k < n; k++) {
                     this.covarianceSum[j][k] += (x[j] - oldMean[j]) * (x[k] - this.mean[k]);
-                    this.covariance.setEntry(j, k, this.covarianceSum[j][k] / this.count);
                 }
             }
         }
 
         // reset the batch
 
+        this.conditionsBatch.clear();
         this.valuesBatch.clear();
 
-        // update the solver
+        this.updateConditionalDistribution();
+    }
 
-        this.choleskyDecomposition = this.regularizedCholesky(this.covariance);
+    private void updateConditionalDistribution() {
+        int nc = this.numConditions;
+        int nv = this.numValues;
+
+        // partition the covariance into sigma11, sigma12, sigma22
+
+        double[][] s11 = new double[nc][nc];
+        double[][] s12 = new double[nc][nv];
+        double[][] s22 = new double[nv][nv];
+
+        for (int i = 0; i < nc; i++)
+            for (int j = 0; j < nc; j++) s11[i][j] = this.covarianceSum[i][j] / this.count;
+        for (int i = 0; i < nc; i++)
+            for (int j = 0; j < nv; j++) s12[i][j] = this.covarianceSum[i][nc + j] / this.count;
+        for (int i = 0; i < nv; i++)
+            for (int j = 0; j < nv; j++) s22[i][j] = this.covarianceSum[nc + i][nc + j] / this.count;
+
+        RealMatrix sigma22 = new Array2DRowRealMatrix(s22);
+
+        if (nc == 0) {
+            this.choleskyDecomposition = this.regularizedCholesky(sigma22);
+            return;
+        }
+
+        RealMatrix sigma12 = new Array2DRowRealMatrix(s12);
+        DecompositionSolver solver11 = new SingularValueDecomposition(new Array2DRowRealMatrix(s11)).getSolver();
+
+        // conditional covariance: Sigma22 - Sigma12^T * Sigma11^{-1} * Sigma12
+        this.regressionMatrix = solver11.solve(sigma12);
+        RealMatrix conditionalCovariance = sigma22.subtract(sigma12.transpose().multiply(this.regressionMatrix));
+
+        this.choleskyDecomposition = this.regularizedCholesky(conditionalCovariance);
     }
 
     @Override
@@ -95,20 +141,22 @@ public class CenteredMultivariateNormalSampler extends ConditionalSampler {
             throw new RuntimeException("Non-finite conditions found.");
         }
 
-        // sample: scaleFactor * L * z,  z ~ N(0, I), giving covariance scaleFactor^2 * Sigma
+        // sample: condMean + scaleFactor * L * z,  z ~ N(0, I), giving covariance scaleFactor^2 * Sigma
         RealMatrix L = this.choleskyDecomposition.getL();
         double[] z = new double[this.numValues];
         for (int i = 0; i < this.numValues; i++) z[i] = rng.nextGaussian();
 
-        return L.operate(new ArrayRealVector(z)).mapMultiply(scaleFactor).toArray();
+        return this.computeConditionalMean(conditions)
+                .add(L.operate(new ArrayRealVector(z)).mapMultiply(scaleFactor))
+                .toArray();
     }
 
     @Override
     public double logDensity(double[] conditions, double[] values, double scaleFactor) {
-        // density of N(0, scaleFactor^2 * Sigma): the quadratic form is scaled by 1/scaleFactor^2
+        // density of N(condMean, scaleFactor^2 * Sigma): the quadratic form is scaled by 1/scaleFactor^2
         // and the log-determinant of the covariance gains 2 * numValues * log(scaleFactor)
 
-        RealVector diff = new ArrayRealVector(values);
+        RealVector diff = new ArrayRealVector(values).subtract(this.computeConditionalMean(conditions));
         RealVector solved = this.choleskyDecomposition.getSolver().solve(diff);
 
         double quadratic = diff.dotProduct(solved) / (scaleFactor * scaleFactor);
@@ -119,6 +167,15 @@ public class CenteredMultivariateNormalSampler extends ConditionalSampler {
         }
 
         return -0.5 * (this.numValues * Math.log(2.0 * Math.PI) + logDeterminant + quadratic);
+    }
+
+    /** Computes Sigma12^T * Sigma11^{-1} * (conditions - mu1), i.e. the conditional mean without the value mean mu2. */
+    private RealVector computeConditionalMean(double[] conditions) {
+        if (this.numConditions == 0) return new ArrayRealVector(this.numValues);
+
+        RealVector centered = new ArrayRealVector(conditions)
+                .subtract(new ArrayRealVector(Arrays.copyOfRange(this.mean, 0, this.numConditions)));
+        return this.regressionMatrix.preMultiply(centered);
     }
 
     public RealMatrix getCovariance() {

@@ -11,7 +11,8 @@ import java.util.function.Function;
 
 public class UnivariateOptimalTransportMap {
 
-    private static final int GRID_SIZE = 12;
+    private static final int GRID_SIZE = 6;
+    private static final int REFINEMENT = 16;
     private static final double MIN_DENSITY = 1.0E-300;
     private static final double EDGE_FRACTION = 1.0E-6;
     private static final double MIN_OTHER_SEGMENT_MASS = 1.0E-12;
@@ -40,12 +41,12 @@ public class UnivariateOptimalTransportMap {
             throw new IllegalArgumentException("transport interval is too small");
         }
 
-        this.grid = getChebyshevGrid(this.supportMin, this.supportMax, pathHeights);
-        double[] logDensities = new double[this.grid.length];
+        double[] nodes = getChebyshevGrid(this.supportMin, this.supportMax, pathHeights);
+        double[] logDensities = new double[nodes.length];
         double maxLogDensity = Double.NEGATIVE_INFINITY;
 
-        for (int i = 0; i < this.grid.length; i++) {
-            logDensities[i] = getLogDensity.apply(this.grid[i]);
+        for (int i = 0; i < nodes.length; i++) {
+            logDensities[i] = getLogDensity.apply(nodes[i]);
 
             if (!Double.isFinite(logDensities[i])) {
                 logDensities[i] = Math.log(MIN_DENSITY);
@@ -58,7 +59,13 @@ public class UnivariateOptimalTransportMap {
             throw new IllegalArgumentException("log density must be finite for at least one grid point");
         }
 
-        this.shiftedLogDensities = getShiftedLogDensities(logDensities, maxLogDensity);
+        // interpolate the log density between the nodes with a monotone cubic, tabulated on a fine grid.
+        // The proposal is exactly the piecewise exp-linear density on that grid, so sampling and the
+        // Hastings ratio stay exact, and the refinement costs no extra density evaluations
+
+        double[] shiftedNodeLogDensities = getShiftedLogDensities(logDensities, maxLogDensity);
+        this.grid = getRefinedGrid(nodes);
+        this.shiftedLogDensities = getMonotoneCubicValues(nodes, shiftedNodeLogDensities, this.grid);
         this.shiftedLogDensitySpline = new LinearInterpolator().interpolate(this.grid, this.shiftedLogDensities);
         this.cumulativeMass = getCumulativeMass(this.grid, this.shiftedLogDensities);
         this.totalMass = this.cumulativeMass[this.cumulativeMass.length - 1];
@@ -188,6 +195,103 @@ public class UnivariateOptimalTransportMap {
         );
 
         return (this.cumulativeMass[interval] + partialMass) / this.totalMass;
+    }
+
+    /** Splits every interval between two nodes into {@code REFINEMENT} equal pieces. */
+    private static double[] getRefinedGrid(double[] nodes) {
+        double[] refinedGrid = new double[(nodes.length - 1) * REFINEMENT + 1];
+        int size = 0;
+
+        for (int i = 0; i < nodes.length - 1; i++) {
+            for (int j = 0; j < REFINEMENT; j++) {
+                double point = nodes[i] + (nodes[i + 1] - nodes[i]) * j / REFINEMENT;
+
+                // very short intervals can round to repeated points, which the interpolator rejects
+                if (size == 0 || point > refinedGrid[size - 1]) {
+                    refinedGrid[size++] = point;
+                }
+            }
+        }
+
+        if (nodes[nodes.length - 1] > refinedGrid[size - 1]) {
+            refinedGrid[size++] = nodes[nodes.length - 1];
+        } else {
+            refinedGrid[size - 1] = nodes[nodes.length - 1];
+        }
+
+        return Arrays.copyOf(refinedGrid, size);
+    }
+
+    /**
+     * Evaluates the monotone piecewise cubic Hermite interpolant (PCHIP, Fritsch-Carlson slopes) of
+     * the node values at the given points. Unlike a cubic spline it never overshoots the node values,
+     * so it cannot put spurious mass next to the sharp peaks and kinks of the log likelihood.
+     */
+    private static double[] getMonotoneCubicValues(double[] nodes, double[] values, double[] points) {
+        int n = nodes.length;
+        double[] result = new double[points.length];
+
+        if (n < 3) {
+            PolynomialSplineFunction linear = new LinearInterpolator().interpolate(nodes, values);
+            for (int k = 0; k < points.length; k++) {
+                result[k] = linear.value(points[k]);
+            }
+            return result;
+        }
+
+        double[] widths = new double[n - 1];
+        double[] secants = new double[n - 1];
+        for (int i = 0; i < n - 1; i++) {
+            widths[i] = nodes[i + 1] - nodes[i];
+            secants[i] = (values[i + 1] - values[i]) / widths[i];
+        }
+
+        // weighted harmonic mean of the neighbouring secants, zero at local extrema
+
+        double[] slopes = new double[n];
+        for (int i = 1; i < n - 1; i++) {
+            if (secants[i - 1] * secants[i] > 0) {
+                double weight1 = 2 * widths[i] + widths[i - 1];
+                double weight2 = widths[i] + 2 * widths[i - 1];
+                slopes[i] = (weight1 + weight2) / (weight1 / secants[i - 1] + weight2 / secants[i]);
+            }
+        }
+        slopes[0] = getEndSlope(widths[0], widths[1], secants[0], secants[1]);
+        slopes[n - 1] = getEndSlope(widths[n - 2], widths[n - 3], secants[n - 2], secants[n - 3]);
+
+        for (int k = 0; k < points.length; k++) {
+            int i = Arrays.binarySearch(nodes, points[k]);
+            if (i < 0) {
+                i = -i - 2;
+            }
+            i = Math.max(0, Math.min(i, n - 2));
+
+            double t = (points[k] - nodes[i]) / widths[i];
+            double t2 = t * t;
+            double t3 = t2 * t;
+            double value = (2 * t3 - 3 * t2 + 1) * values[i]
+                    + (t3 - 2 * t2 + t) * widths[i] * slopes[i]
+                    + (-2 * t3 + 3 * t2) * values[i + 1]
+                    + (t3 - t2) * widths[i] * slopes[i + 1];
+            result[k] = Math.max(Math.log(MIN_DENSITY), value);
+        }
+
+        return result;
+    }
+
+    /** Three-point end slope, limited so that the end intervals stay monotone. */
+    private static double getEndSlope(double width0, double width1, double secant0, double secant1) {
+        double slope = ((2 * width0 + width1) * secant0 - width0 * secant1) / (width0 + width1);
+
+        if (Math.signum(slope) != Math.signum(secant0)) {
+            return 0.0;
+        }
+
+        if (Math.signum(secant0) != Math.signum(secant1) && Math.abs(slope) > Math.abs(3 * secant0)) {
+            return 3 * secant0;
+        }
+
+        return slope;
     }
 
     private static double[] getShiftedLogDensities(double[] logDensities, double shift) {

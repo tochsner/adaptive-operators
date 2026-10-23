@@ -1,15 +1,21 @@
 import weightoptimization.AdaptiveWeightOperator;
+import weightoptimization.ESSWeightAdaptationOperator;
+import adapters.RobinsonFouldsDistanceAdapter;
+import mcmc.OperatorTimingMCMC;
 import weightoptimization.RunningAverageScheme;
 import schedule.DualAveragingOperatorSchedule;
+import schedule.ESSWeightOperatorSchedule;
 import adaptiveoperators.AdaptiveOperator;
 import adapters.BasicAdapter;
 import adapters.TreeTripletAdapter;
 import adapters.LocalTreeAdapter;
 import adapters.NodeEmbeddingAdapter;
 import adapters.TreeHeightAdapter;
+import adapters.TreeLengthAdapter;
 import adapters.MutableTreeHeightAdapter;
 import adapters.TreeDescriptionAdapter;
 import adapters.NodePositionAdapter;
+import adapters.Adapter;
 import mala.CubeMAPGuidedMALAOperator;
 import adapters.NodeValueAdapter;
 import adaptiveoperators.TaxaDistanceOperator;
@@ -17,6 +23,7 @@ import adaptiveoperators.TripletDistanceOperator;
 import adapters.TaxaDistanceAdapterGenerator;
 import adapters.CubeAdapter;
 import transforms.RealVectorIdentityTransform;
+import transforms.RealScalarIdentityTransform;
 import transforms.IntVectorIdentityTransform;
 import transforms.RealScalarSigmoidTransform;
 import transforms.RealScalarLogTransform;
@@ -42,7 +49,9 @@ import largejump.UnifiedLargeJumpMALAOperator;
 import mcmc.SliceMCMC;
 import mcmc.MLMCMC;
 import mcmc.MalaMCMC;
+import mcmc.OperatorTimingMCMC;
 import mcmc.JumpMCMC;
+import mcmc.ESSStoppingMCMC;
 import surrogate.SimulatedAnnealing;
 import surrogate.SATreeGraphOperator;
 import surrogate.TreeGraphOperator;
@@ -70,6 +79,8 @@ open module adaptiveoperators {
 
     exports adaptiveoperators;
     exports weightoptimization;
+    exports adapters;
+    exports mala;
 
     provides beast.base.core.BEASTInterface with
             DistanceMatrixOperator,
@@ -82,14 +93,17 @@ open module adaptiveoperators {
             TaxaDistanceAdapterGenerator,
             NodeEmbeddingAdapter,
             IntSimplexRoundTransform,
+            RealScalarIdentityTransform,
             SimulatedAnnealing,
             DualAveragingOperatorSchedule,
+            ESSWeightOperatorSchedule,
             StepOutShrinkSliceOperator,
             MultivariateStepOutShrinkSliceOperator,
             MAPGuidedMALAOperator,
             UpgmaRefreshOperator,
             CubeAdapter,
             MalaMCMC,
+            OperatorTimingMCMC,
             SliceMCMC,
             TreeTripletAdapter,
             GuidedRandomWalkOperator,
@@ -102,9 +116,11 @@ open module adaptiveoperators {
             LargeJumpMALAOperator,
             LocalTreeAdapter,
             TreeHeightAdapter,
+            TreeLengthAdapter,
             MutableTreeHeightAdapter,
             NodeValueAdapter,
             JumpMCMC,
+            ESSStoppingMCMC,
             NodePositionAdapter,
             MLMCMC,
             NodeTransportOperator,
@@ -125,5 +141,7 @@ open module adaptiveoperators {
             SimplexRoundTransform,
             RealVectorLogTransform,
             AdaptiveWeightOperator,
+            ESSWeightAdaptationOperator,
+            RobinsonFouldsDistanceAdapter,
             RunningAverageScheme;
 }
