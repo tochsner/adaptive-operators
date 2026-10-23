@@ -7,8 +7,11 @@ import beast.base.inference.Logger;
 import beast.base.inference.Operator;
 
 import java.io.ByteArrayOutputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.PrintStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -40,19 +43,25 @@ public class ESSStoppingMCMC extends JumpMCMC {
         return LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
     }
 
-    /** Prints a message to the screen and writes it as a comment to the log files. */
-    private void announce(final String message) {
+    /** Prints a message to the screen and writes it as a comment at the top of the log files. */
+    private void announce(final String message) throws IOException {
         Log.info.println(message);
         this.writeCommentToLogFiles(message);
     }
 
-    /** Writes a comment line to every compound log file, which tools like Tracer skip when reading the log. */
-    private void writeCommentToLogFiles(final String comment) {
+    /** Writes a comment line at the top of every compound log file, which tools like Tracer skip when reading the log. */
+    private void writeCommentToLogFiles(final String comment) throws IOException {
         for (final Logger logger : this.loggers) {
             // tree logs are nexus files, and the screen logger has no file
             if (logger.mode != Logger.LOGMODE.compound || logger.getFileName() == null) continue;
 
-            logger.getM_out().println("# " + comment);
+            logger.getM_out().close();
+
+            final Path path = Path.of(logger.getFileName());
+            final String content = Files.readString(path);
+            Files.writeString(path, "# " + comment + "\n" + content);
+
+            logger.setPrintStream(new PrintStream(new FileOutputStream(path.toFile(), true)));
         }
     }
 
