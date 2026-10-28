@@ -25,6 +25,13 @@ public class ESSWeightOperatorSchedule extends DualAveragingOperatorSchedule {
         }
     }
 
+    /**
+     * Recomputes the selection probabilities from the current operator weights.
+     */
+    public void reweight() {
+        this.reweightOperators();
+    }
+
     private void printWeights(ESSWeightAdaptationOperator weightOperator, PrintStream out) {
         String status = weightOperator.isAdapted() ? "" : " (never adapted, initial weights in use)";
 

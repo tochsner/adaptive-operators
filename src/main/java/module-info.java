@@ -1,5 +1,6 @@
 import weightoptimization.AdaptiveWeightOperator;
 import weightoptimization.ESSWeightAdaptationOperator;
+import weightoptimization.GroupESSWeightAdaptationOperator;
 import adapters.RobinsonFouldsDistanceAdapter;
 import mcmc.OperatorTimingMCMC;
 import weightoptimization.RunningAverageScheme;
@@ -142,6 +143,7 @@ open module adaptiveoperators {
             RealVectorLogTransform,
             AdaptiveWeightOperator,
             ESSWeightAdaptationOperator,
+            GroupESSWeightAdaptationOperator,
             RobinsonFouldsDistanceAdapter,
             RunningAverageScheme;
 }

@@ -1,7 +1,6 @@
 package weightoptimization;
 
 import adapters.Adapter;
-import adapters.ReferenceAdapter;
 import beast.base.core.Input;
 import beast.base.core.Log;
 import beast.base.inference.Operator;
@@ -10,8 +9,8 @@ import beast.base.inference.StateNode;
 import beast.base.internal.json.JSONArray;
 import beast.base.internal.json.JSONException;
 import beast.base.internal.json.JSONObject;
-import beast.base.spec.inference.util.ESS;
 import beast.base.util.Randomizer;
+import mcmc.ThinnedEssTracker;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -34,16 +33,18 @@ import java.util.function.Consumer;
  * <ol>
  *   <li>warm-up: the traces of all adapters are recorded until the smallest ESS over all of them
  *   exceeds {@code lowThreshold};</li>
- *   <li>monitoring: adapters that measure against a reference ({@link ReferenceAdapter}) move it
- *   to the current state, and the time spent in each operator is recorded until the smallest ESS
- *   within the monitoring window alone exceeds {@code highThreshold - lowThreshold};</li>
- *   <li>adapted: the weights computed from the monitoring window are used for the rest of the run.</li>
+ *   <li>monitoring: the traces keep being recorded, along with the time spent in each operator,
+ *   until the smallest ESS over all of them exceeds {@code highThreshold};</li>
+ *   <li>adapted: the weights computed from the monitoring are used for the rest of the run.</li>
  * </ol>
  *
  * <p>The chain is as good as its worst trace, so the weights aim at equal ESS per second on all
  * traces: an operator's new selection probability is proportional to the number of applications it
- * needed per unit of ESS of its adapter's trace within the monitoring window alone (smallest over
- * its coordinates), mixed with a floor so that no operator is switched off entirely.
+ * needed per unit of ESS its adapter's trace gained between the start and the end of the monitoring
+ * (smallest over its coordinates), mixed with a floor so that no operator is switched off entirely.
+ *
+ * <p>The ESS of a trace is computed by a {@link ThinnedEssTracker}, which leaves out the first 10%
+ * of the trace as burn-in, like Tracer does.
  *
  * <p>Application times are not measured here; they are supplied through
  * {@link #recordApplicationTime(long)}, which {@link mcmc.OperatorTimingMCMC} calls with the
@@ -62,7 +63,7 @@ public class ESSWeightAdaptationOperator extends Operator {
             "lowThreshold", "Smallest ESS above which monitoring starts.", 25.0
     );
     final public Input<Double> highThresholdInput = new Input<>(
-            "highThreshold", "The weights are adjusted once the smallest ESS within the monitoring window exceeds highThreshold - lowThreshold.", 75.0
+            "highThreshold", "The weights are adjusted once the smallest ESS exceeds highThreshold.", 75.0
     );
     final public Input<Double> minWeightFractionInput = new Input<>(
             "minWeightFraction", "Selection probability every operator keeps after adaptation.", 0.1
@@ -70,8 +71,6 @@ public class ESSWeightAdaptationOperator extends Operator {
 
     private static final int SAMPLING_INTERVAL = 100;
     private static final double MIN_ESS_GAIN = 1.0;
-    private static final int FIRST_ESS_CHECK = 100;
-    private static final double ESS_CHECK_GROWTH = 1.1;
 
     private enum Phase {WARM_UP, MONITORING, ADAPTED}
 
@@ -85,18 +84,15 @@ public class ESSWeightAdaptationOperator extends Operator {
     private double[][] valuesBeforeProposal;
     private int numSteps;
     private boolean isRecordedStep;
-    private boolean isReferenceResetPending;
 
     // indexed by operator, then by coordinate of that operator's adapter
-    private List<List<List<Double>>> traces;
+    private List<List<ThinnedEssTracker>> trackers;
     private int numSamples;
-    private int nextEssCheck = FIRST_ESS_CHECK;
-    private int monitoringStartSample;
 
     private long[] nanosPerOperator;
     private int[] numTimedApplications;
     private double[] warmUpEss;
-    private double[] windowEss;
+    private double[] endEss;
     private int[] numAccepted;
     private int[] numRejected;
 
@@ -110,7 +106,7 @@ public class ESSWeightAdaptationOperator extends Operator {
         this.probabilities = this.computeInitialProbabilities();
         this.initialProbabilities = this.probabilities.clone();
 
-        this.traces = this.createEmptyTraces();
+        this.trackers = this.createTrackers();
         this.nanosPerOperator = new long[this.operators.size()];
         this.numTimedApplications = new int[this.operators.size()];
         this.numAccepted = new int[this.operators.size()];
@@ -138,28 +134,24 @@ public class ESSWeightAdaptationOperator extends Operator {
         return this.operators.stream().mapToDouble(operator -> operator.getWeight() / totalWeight).toArray();
     }
 
-    private List<List<List<Double>>> createEmptyTraces() {
-        List<List<List<Double>>> emptyTraces = new ArrayList<>();
+    private List<List<ThinnedEssTracker>> createTrackers() {
+        List<List<ThinnedEssTracker>> newTrackers = new ArrayList<>();
 
         for (Adapter adapter : this.adapters) {
-            List<List<Double>> operatorTraces = new ArrayList<>();
+            List<ThinnedEssTracker> operatorTrackers = new ArrayList<>();
 
             for (int k = 0; k < adapter.getNumImmutable(); k++) {
-                operatorTraces.add(new ArrayList<>());
+                operatorTrackers.add(new ThinnedEssTracker(1));
             }
 
-            emptyTraces.add(operatorTraces);
+            newTrackers.add(operatorTrackers);
         }
 
-        return emptyTraces;
+        return newTrackers;
     }
 
     @Override
     public double proposal() {
-        if (this.isReferenceResetPending) {
-            this.resetReferences();
-        }
-
         // only every few steps are recorded, which also saves reading the adapters on the others
         this.numSteps++;
         this.isRecordedStep = this.phase != Phase.ADAPTED && this.numSteps % SAMPLING_INTERVAL == 0;
@@ -171,20 +163,6 @@ public class ESSWeightAdaptationOperator extends Operator {
         this.lastOperatorIdx = Randomizer.binarySearchSampling(this.computeCumulativeProbabilities());
 
         return this.operators.get(this.lastOperatorIdx).proposal();
-    }
-
-    /**
-     * Moves the reference of every adapter that has one to the current state. This happens at the
-     * start of a proposal, since only then is the state guaranteed to be the current one.
-     */
-    private void resetReferences() {
-        for (Adapter adapter : this.adapters) {
-            if (adapter instanceof ReferenceAdapter referenceAdapter) {
-                referenceAdapter.resetReference();
-            }
-        }
-
-        this.isReferenceResetPending = false;
     }
 
     private double[][] readAdapters() {
@@ -238,14 +216,10 @@ public class ESSWeightAdaptationOperator extends Operator {
 
         for (int i = 0; i < values.length; i++) {
             for (int k = 0; k < values[i].length; k++) {
-                this.traces.get(i).get(k).add(values[i][k]);
+                this.trackers.get(i).get(k).record(values[i][k]);
             }
         }
         this.numSamples++;
-
-        // the ESS is expensive, so it is only evaluated at geometrically spaced sample counts
-        if (this.numSamples < this.nextEssCheck) return;
-        this.nextEssCheck = (int) Math.ceil(this.nextEssCheck * ESS_CHECK_GROWTH);
 
         if (this.phase == Phase.WARM_UP) {
             this.updateWarmUp();
@@ -255,55 +229,40 @@ public class ESSWeightAdaptationOperator extends Operator {
     }
 
     private void updateWarmUp() {
-        this.warmUpEss = this.computeOperatorEss(0);
+        this.warmUpEss = this.computeOperatorEss();
 
         if (Arrays.stream(this.warmUpEss).min().orElse(0.0) > this.lowThresholdInput.get()) {
             this.phase = Phase.MONITORING;
-            this.monitoringStartSample = this.numSamples;
-            this.isReferenceResetPending = true;
 
             Log.info.println("Monitoring operator behavior started. Current ESS: " + Arrays.toString(this.warmUpEss));
         }
     }
 
-    /**
-     * Only the monitoring window counts here: the references may have moved at its start, which
-     * makes the trace before and after it incomparable.
-     */
     private void updateMonitoring() {
-        this.windowEss = this.computeOperatorEss(this.monitoringStartSample);
+        this.endEss = this.computeOperatorEss();
 
-        double targetEss = this.highThresholdInput.get() - this.lowThresholdInput.get();
-        if (Arrays.stream(this.windowEss).min().orElse(0.0) > targetEss) {
+        if (Arrays.stream(this.endEss).min().orElse(0.0) > this.highThresholdInput.get()) {
             this.adaptWeights();
             this.phase = Phase.ADAPTED;
-            this.traces = null;
+            this.trackers = null;
         }
     }
 
     /**
-     * Smallest ESS over the coordinates of each operator's adapter, counting only the samples from
-     * {@code fromSample} on. An adapter without coordinates gets infinite ESS, so that it cannot
-     * hold the others back.
+     * Smallest ESS over the coordinates of each operator's adapter. An adapter without coordinates
+     * gets infinite ESS, so that it cannot hold the others back.
      */
-    private double[] computeOperatorEss(int fromSample) {
-        return this.traces.stream()
-                .mapToDouble(operatorTraces -> operatorTraces.stream()
-                        .mapToDouble(trace -> computeEss(trace.subList(fromSample, trace.size())))
+    private double[] computeOperatorEss() {
+        return this.trackers.stream()
+                .mapToDouble(operatorTrackers -> operatorTrackers.stream()
+                        .mapToDouble(ThinnedEssTracker::getEss)
                         .min()
                         .orElse(Double.POSITIVE_INFINITY))
                 .toArray();
     }
 
-    private static double computeEss(List<Double> trace) {
-        double ess = ESS.calcESS(trace);
-
-        // a trace that has not moved yet has no autocorrelation to speak of
-        return Double.isNaN(ess) ? 0.0 : ess;
-    }
-
     private void adaptWeights() {
-        double[] needs = this.computeNeeds(this.windowEss);
+        double[] needs = this.computeNeeds();
         double totalNeed = Arrays.stream(needs).sum();
 
         if (!(totalNeed > 0.0) || Double.isInfinite(totalNeed)) {
@@ -324,21 +283,22 @@ public class ESSWeightAdaptationOperator extends Operator {
     /**
      * How many applications each operator needed per unit of ESS gained on its own trace.
      *
-     * <p>The gain is the ESS of the monitoring window alone, so that the transient from the start
-     * of the chain, which depresses the ESS of the whole trace, does not count as mixing.
+     * <p>The gain is the difference between the ESS at the end and at the start of the monitoring,
+     * so that the ESS the trace had already reached during warm-up does not count as mixing.
      *
      * <p>The chain is as good as its worst trace, so the time is best spent equalising the ESS per
      * second of all traces. An operator whose trace is already mixing well therefore gets less
      * weight, and one whose trace gains little per application gets more. A gain below one effective
      * sample is counted as one, so an operator that does not move its trace at all cannot take over.
      */
-    private double[] computeNeeds(double[] windowEss) {
+    private double[] computeNeeds() {
         double[] needs = new double[this.operators.size()];
 
         for (int i = 0; i < needs.length; i++) {
-            if (!Double.isFinite(windowEss[i])) continue;
+            if (!Double.isFinite(this.endEss[i])) continue;
 
-            needs[i] = this.numTimedApplications[i] / Math.max(windowEss[i], MIN_ESS_GAIN);
+            double gain = this.endEss[i] - this.warmUpEss[i];
+            needs[i] = this.numTimedApplications[i] / Math.max(gain, MIN_ESS_GAIN);
         }
 
         return needs;
@@ -347,8 +307,8 @@ public class ESSWeightAdaptationOperator extends Operator {
     /**
      * Formats the selection probability, acceptance count and acceptance rate of every wrapped
      * operator as a table, alongside the probability it started with, the ESS of its adapter at the
-     * end of warm-up, the most recently evaluated ESS of its adapter within the monitoring window
-     * (which the weights are based on) and its average time per application in microseconds.
+     * start of the monitoring, the most recently evaluated ESS of its adapter during it (which the
+     * weights are based on) and its average time per application in microseconds.
      */
     public String formatWeightTable() {
         int nameWidth = this.operators.stream().mapToInt(operator -> operator.getName().length()).max().orElse(0);
@@ -357,7 +317,7 @@ public class ESSWeightAdaptationOperator extends Operator {
         String rowFormat = "%-" + nameWidth + "s %10s %10s %10s %10s %10s %10s %10s %10s%n";
 
         StringBuilder builder = new StringBuilder();
-        builder.append(String.format(rowFormat, "Operator", "Pr(m) init", "Pr(m)", "#accept", "#reject", "Pr(acc|m)", "ESS warmup", "ESS window", "time [us]"));
+        builder.append(String.format(rowFormat, "Operator", "Pr(m) init", "Pr(m)", "#accept", "#reject", "Pr(acc|m)", "ESS start", "ESS end", "time [us]"));
 
         for (int i = 0; i < this.operators.size(); i++) {
             int numProposals = this.numAccepted[i] + this.numRejected[i];
@@ -371,7 +331,7 @@ public class ESSWeightAdaptationOperator extends Operator {
                     String.format("%.5f", this.probabilities[i]),
                     this.numAccepted[i], this.numRejected[i], acceptanceRate,
                     this.warmUpEss == null ? "-" : String.format("%.1f", this.warmUpEss[i]),
-                    this.windowEss == null ? "-" : String.format("%.1f", this.windowEss[i]),
+                    this.endEss == null ? "-" : String.format("%.1f", this.endEss[i]),
                     this.numTimedApplications[i] == 0
                             ? "-"
                             : String.format("%.1f", this.nanosPerOperator[i] * 1e-3 / this.numTimedApplications[i])
@@ -446,7 +406,7 @@ public class ESSWeightAdaptationOperator extends Operator {
         }
     }
 
-    private static JSONObject readStoredJson(Consumer<PrintWriter> store) throws JSONException {
+    static JSONObject readStoredJson(Consumer<PrintWriter> store) throws JSONException {
         StringWriter buffer = new StringWriter();
         PrintWriter writer = new PrintWriter(buffer);
 

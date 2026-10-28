@@ -22,6 +22,11 @@ public class AdaptiveOperator extends Operator {
             "If true, all mutable parameters of a node are redrawn from their learned conditional distribution " +
                     "given the immutable ones. If false, all mutable parameters are changed locally by adding " +
                     "zero-mean noise with the learned covariance to their current values.", true);
+    public final Input<String> samplerInput = new Input<>("sampler",
+            "The conditional sampler learning the distribution of the mutable parameters: multivariate_normal, " +
+                    "centered_multivariate_normal, gaussian_mixture or neural_gaussian_mixture. Defaults to " +
+                    "multivariate_normal for the global redraw and centered_multivariate_normal otherwise. The " +
+                    "local random walk requires centered_multivariate_normal, as it relies on symmetric zero-mean noise.");
 
     private List<Adapter> adapters;
     private Tree tree;
@@ -54,11 +59,33 @@ public class AdaptiveOperator extends Operator {
         this.numMutable = totalNumMutable;
         this.numImmutable = totalNumImmutable;
 
-        if (this.globalRedraw) {
-            this.sampler = new MultivariateNormalSampler(totalNumImmutable, totalNumMutable);
+        this.sampler = this.createSampler();
+    }
+
+    private ConditionalSampler createSampler() {
+        SamplerType samplerType;
+        if (this.samplerInput.get() != null) {
+            samplerType = SamplerType.fromName(this.samplerInput.get());
+        } else if (this.globalRedraw) {
+            samplerType = SamplerType.MULTIVARIATE_NORMAL;
         } else {
-            this.sampler = new CenteredMultivariateNormalSampler(totalNumMutable);
+            samplerType = SamplerType.CENTERED_MULTIVARIATE_NORMAL;
         }
+
+        if (!this.globalRedraw && samplerType != SamplerType.CENTERED_MULTIVARIATE_NORMAL) {
+            throw new IllegalArgumentException("The local random walk (globalRedraw=false) requires the " +
+                    "centered_multivariate_normal sampler, but got '" + this.samplerInput.get() + "'");
+        }
+
+        // the local random walk learns the noise without conditioning on the immutable parameters
+        int numConditions = this.globalRedraw ? this.numImmutable : 0;
+
+        return switch (samplerType) {
+            case MULTIVARIATE_NORMAL -> new MultivariateNormalSampler(numConditions, this.numMutable);
+            case CENTERED_MULTIVARIATE_NORMAL -> new CenteredMultivariateNormalSampler(numConditions, this.numMutable);
+            case GAUSSIAN_MIXTURE -> new GaussianMixtureSampler(numConditions, this.numMutable);
+            case NEURAL_GAUSSIAN_MIXTURE -> new NeuralGaussianMixtureSampler(numConditions, this.numMutable);
+        };
     }
 
     @Override
@@ -216,6 +243,21 @@ public class AdaptiveOperator extends Operator {
 
         if (Double.isFinite(Math.exp(delta))) {
             this.scaleFactor = Math.min(MAX_SCALE_FACTOR, Math.max(MIN_SCALE_FACTOR, Math.exp(delta)));
+        }
+    }
+
+    private enum SamplerType {
+        MULTIVARIATE_NORMAL,
+        CENTERED_MULTIVARIATE_NORMAL,
+        GAUSSIAN_MIXTURE,
+        NEURAL_GAUSSIAN_MIXTURE;
+
+        private static SamplerType fromName(String name) {
+            try {
+                return SamplerType.valueOf(name.toUpperCase());
+            } catch (IllegalArgumentException exception) {
+                throw new IllegalArgumentException("Unknown sampler '" + name + "'", exception);
+            }
         }
     }
 }
